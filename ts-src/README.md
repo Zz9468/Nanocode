@@ -1,9 +1,5 @@
 # Nanocode
 
-<p align="center">
-  <img src="./docs/logo.svg" alt="Nanocode Logo" width="180" />
-</p>
-
 <h2 align="center">Nanocode</h2>
 
 <p align="center">
@@ -18,7 +14,7 @@
   A lightweight, highly efficient coding tool. Designed for speed, built for simplicity.
 </p>
 
-[简体中文](./README.zh-CN.md) | [Architecture](./ARCHITECTURE.md) | [Contributing](./CONTRIBUTING.md) | [Roadmap](./ROADMAP.md) | [Learn Claude Code Design Through Nanocode](./CLAUDE_CODE_PATTERNS.md) | [License](./LICENSE)
+[简体中文](./README.zh-CN.md) | [License](./LICENSE)
 
 A lightweight terminal coding assistant for local development workflows.
 
@@ -36,15 +32,8 @@ Nanocode is built around a practical terminal-first agent loop:
 
 The project is intentionally compact, so the control flow, tool model, and TUI behavior remain easy to understand and extend.
 
-## Multi-language Versions
-
-- TypeScript (this repo): [Nanocode](https://github.com/LiuMengxuan04/MiniCode)
-- Rust version: [Nanocode-rs (latest)](https://github.com/harkerhand/MiniCode-rs/tree/master)
-- Python version: coming soon
-
 ## Table of Contents
 
-- [Product Showcase Page](#product-showcase-page)
 - [Why Nanocode](#why-nanocode)
 - [Features](#features)
 - [Installation](#installation)
@@ -52,18 +41,8 @@ The project is intentionally compact, so the control flow, tool model, and TUI b
 - [Commands](#commands)
 - [Configuration](#configuration)
 - [Skills and MCP Usage](#skills-and-mcp-usage)
-- [Star History](#star-history)
 - [Project Structure](#project-structure)
-- [Architecture Docs](#architecture-docs)
-- [Contributing](#contributing)
-- [Roadmap](#roadmap)
-- [Learn Claude Code Design Through Nanocode](#learn-claude-code-design-through-nanocode)
 - [Development](#development)
-
-## Product Showcase Page
-
-- Open [docs/index.html](./docs/index.html) in a browser for a visual product overview.
-- GitHub Pages (recommended): `https://liumengxuan04.github.io/Nanocode/`
 
 ## Why Nanocode
 
@@ -72,7 +51,7 @@ Nanocode is a good fit if you want:
 - a lightweight coding assistant instead of a large platform
 - a terminal UI with tool calling, transcript, and command workflow
 - a small codebase that is suitable for study and modification
-- a reference implementation for Claude Code-like agent architecture
+- an implementation for Claude Code-like agent architecture
 
 ## Features
 
@@ -419,22 +398,6 @@ For vendor compatibility, Nanocode automatically tries:
 
 That means servers such as MiniMax MCP, which use newline-delimited JSON over stdio, can still be connected directly.
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=LiuMengxuan04%2FNanocode&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=LiuMengxuan04/Nanocode&type=date&theme=dark&legend=bottom-right" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=LiuMengxuan04/Nanocode&type=date&legend=bottom-right" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=LiuMengxuan04/Nanocode&type=date&legend=bottom-right" />
- </picture>
-</a>
-
-## Learn Claude Code Design Through Nanocode
-
-If you want to study the project as a learning resource, continue with:
-
-- [What Claude Code Design Ideas You Can Learn Through Nanocode](./CLAUDE_CODE_PATTERNS.md)
-
 ## Project Structure
 
 - `src/index.ts`: CLI entry
@@ -447,21 +410,6 @@ If you want to study the project as a learning resource, continue with:
 - `src/tui/*`: terminal UI modules
 - `src/config.ts`: runtime configuration loading
 - `src/install.ts`: interactive installer
-
-## Architecture Docs
-
-- [Architecture Overview](./ARCHITECTURE.md)
-- [中文架构说明](./ARCHITECTURE_ZH.md)
-
-## Contributing
-
-- [Contribution Guidelines](./CONTRIBUTING.md)
-- [中文贡献规范](./CONTRIBUTING_ZH.md)
-
-## Roadmap
-
-- [Roadmap](./ROADMAP.md)
-- [路线图（中文）](./ROADMAP_ZH.md)
 
 ## Development
 

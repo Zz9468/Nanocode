@@ -107,7 +107,7 @@ $env:OPENAI_API_KEY = "YOUR_API_KEY"
 nanocode
 ```
 
-普通 CLI **不会自动读取项目 `.env` 文件**。请在终端中设置变量，或写入 `settings.json`。对于上面的 OpenAI 兼容示例，配置文件 `env` 对象中的值优先于同名终端变量。`.env.example` 用于查看支持的变量，也可作为 Docker Compose 配置的参考。
+普通 CLI **不会自动读取项目 `.env` 文件**。请在终端中设置变量，或写入 `settings.json`。对于上面的 OpenAI 兼容示例，配置文件 `env` 对象中的值优先于同名终端变量。`.env.example` 用于查看支持的变量，也可作为 Docker Compose 配置的示例。
 
 其他配置包括 `fallbackModels`、各服务商的候选回退模型列表，以及 `runtimeProfile`（`single` 或 `single-deep`）。候选模型必须是当前端点实际提供的模型。就绪检查核对本地配置，不能证明密钥有效、模型可用或账号额度充足。
 
@@ -253,7 +253,7 @@ flowchart TD
 | `Package/EngineeringStructure/` | 工程结构投影与合规检查表面，以及镜像测试。 |
 | `tests/` | 主要 Python 回归测试。 |
 | `benchmarks/` | 评估、打包和发布验证脚本。 |
-| `Package/EngineeringStructure/Config/` | 机器可读的材料清单、迁移记录与对齐来源。 |
+| `Package/EngineeringStructure/Config/` | 机器可读的材料清单与迁移记录。 |
 | `ts-src/` | TypeScript 对照与历史源码材料，Python 快速开始不依赖它。 |
 
 仓库仍在进行结构迁移，当前 CLI 实现在 `nanocode/`。模块边界与迁移证据见[材料清单](./Package/EngineeringStructure/Config/material-inventory.json)。公开仓库只保留 README 类文档；历史设计文档和生成报告留在本地，CI 检查已提交的代码、配置与真实测试输入。
@@ -296,12 +296,3 @@ python -m nanocode.release_readiness --check-release-markdown benchmarks/release
 
 </details>
 
-## 延伸阅读
-
-- [英文 README](./README.md)
-- [产品架构投影](./Main/NanocodeFrontline/Src/Application/Query/CurrentRuntimeProjection.py)
-- [记忆模块](./Package/AgentMemory/Src/Boot/App.py)
-- [工程结构检查器](./Package/EngineeringStructure/Src/Application/Query/StructureCompliance.py)
-- [TypeScript 对齐来源](./Package/EngineeringStructure/Config/ts-parity-provenance.json)
-
-历史源码参考：[上游终端项目](https://github.com/LiuMengxuan04/MiniCode)与[上游 Python 项目](https://github.com/QUSETIONS/MiniCode-Python)。

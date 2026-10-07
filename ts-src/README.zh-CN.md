@@ -1,9 +1,5 @@
 # Nanocode
 
-<p align="center">
-  <img src="./docs/logo.svg" alt="Nanocode Logo" width="180" />
-</p>
-
 <h2 align="center">Nanocode</h2>
 
 <p align="center">
@@ -18,7 +14,7 @@
   一个轻量且高效的编码工具。为速度而生，为简洁而建。
 </p>
 
-[English](./README.md) | [架构说明](./ARCHITECTURE_ZH.md) | [贡献规范](./CONTRIBUTING_ZH.md) | [路线图](./ROADMAP_ZH.md) | [通过 Nanocode 学习 Claude Code 设计](./CLAUDE_CODE_PATTERNS_ZH.md) | [License](./LICENSE)
+[English](./README.md) | [License](./LICENSE)
 
 一个面向本地开发工作流的轻量级终端编码助手。
 
@@ -36,12 +32,6 @@ Nanocode 围绕一个实用的 terminal-first agent loop 构建：
 
 整个项目有意保持紧凑，这样主控制流、工具模型和 TUI 行为都更容易理解和扩展。
 
-## 多语言版本
-
-- TypeScript（本仓库）：[Nanocode](https://github.com/LiuMengxuan04/MiniCode)
-- Rust 版本：[Nanocode-rs（最新）](https://github.com/harkerhand/MiniCode-rs/tree/master)
-- Python 版本：coming soon
-
 ## 目录
 
 - [产品介绍展示页](#产品介绍展示页)
@@ -52,12 +42,7 @@ Nanocode 围绕一个实用的 terminal-first agent loop 构建：
 - [命令](#命令)
 - [配置](#配置)
 - [Skills 与 MCP 用法](#skills-与-mcp-用法)
-- [Star 趋势](#star-趋势)
 - [项目结构](#项目结构)
-- [架构文档](#架构文档)
-- [贡献规范](#贡献规范)
-- [路线图](#路线图)
-- [通过 Nanocode 学习 Claude Code 设计](#通过-nanocode-学习-claude-code-设计)
 - [开发说明](#开发说明)
 
 ## 产品介绍展示页
@@ -72,7 +57,7 @@ Nanocode 围绕一个实用的 terminal-first agent loop 构建：
 - 一个轻量级 coding assistant，而不是庞大的平台
 - 一个带 tool calling、transcript 和命令工作流的终端 UI
 - 一个很适合阅读和二次开发的小代码库
-- 一个可用于学习类 Claude Code agent 架构的参考实现
+- 一个可用于学习类 Claude Code agent 架构的实现
 
 ## 功能特性
 
@@ -418,23 +403,6 @@ Nanocode 当前主要支持：
 
 所以像 MiniMax 这类采用按行 JSON 的 MCP server，也可以直接接入。
 
-## Star 趋势
-
-<p align="center">
-  <a href="https://star-history.com/#LiuMengxuan04/Nanocode&Date">
-    <img
-      alt="Star History Chart"
-      src="https://api.star-history.com/image?repos=LiuMengxuan04/Nanocode&style=landscape1"
-    />
-  </a>
-</p>
-
-## 通过 Nanocode 学习 Claude Code 设计
-
-如果你想把这个项目当成学习材料，可以继续阅读：
-
-- [通过 Nanocode 你可以学习到 Claude Code 的哪些设计](./CLAUDE_CODE_PATTERNS_ZH.md)
-
 ## 项目结构
 
 - `src/index.ts`: CLI 入口
@@ -447,21 +415,6 @@ Nanocode 当前主要支持：
 - `src/tui/*`: 终端 UI 模块
 - `src/config.ts`: 运行时配置加载
 - `src/install.ts`: 交互式安装器
-
-## 架构文档
-
-- [Architecture Overview](./ARCHITECTURE.md)
-- [中文架构说明](./ARCHITECTURE_ZH.md)
-
-## 贡献规范
-
-- [中文贡献规范](./CONTRIBUTING_ZH.md)
-- [Contribution Guidelines](./CONTRIBUTING.md)
-
-## 路线图
-
-- [路线图（中文）](./ROADMAP_ZH.md)
-- [Roadmap](./ROADMAP.md)
 
 ## 开发说明
 

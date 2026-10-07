@@ -107,7 +107,7 @@ $env:OPENAI_API_KEY = "YOUR_API_KEY"
 nanocode
 ```
 
-The ordinary CLI **does not automatically load a project `.env` file**. Export variables in your shell or put them in `settings.json`. For the OpenAI-compatible example, values in the settings file's `env` object are preferred over matching shell variables. `.env.example` is a reference for supported variables and Docker Compose configuration.
+The ordinary CLI **does not automatically load a project `.env` file**. Export variables in your shell or put them in `settings.json`. For the OpenAI-compatible example, values in the settings file's `env` object are preferred over matching shell variables. `.env.example` lists supported variables and provides a Docker Compose configuration example.
 
 Additional settings include `fallbackModels`, provider-specific fallback lists, and `runtimeProfile` (`single` or `single-deep`). Configure fallback IDs that your endpoint actually offers. Local readiness checks inspect configuration; they do not prove that a key is valid, a model is available, or quota remains.
 
@@ -253,7 +253,7 @@ flowchart TD
 | `Package/EngineeringStructure/` | Engineering structure projection and compliance surfaces with mirror tests. |
 | `tests/` | Main Python regression suite. |
 | `benchmarks/` | Evaluation and packaging/release verification runners. |
-| `Package/EngineeringStructure/Config/` | Machine-readable material inventory, migration records, and parity provenance. |
+| `Package/EngineeringStructure/Config/` | Machine-readable material inventory and migration records. |
 | `ts-src/` | TypeScript comparison and historical source material; not required by the Python quick start. |
 
 The repository is in an ongoing structural migration. The active CLI still lives in `nanocode/`; module boundaries and migration evidence are tracked in the [material inventory](./Package/EngineeringStructure/Config/material-inventory.json). Only README documentation is published. Historical design documents and generated reports stay local; CI validates published code, configuration, and canonical test inputs.
@@ -296,12 +296,3 @@ For local readiness artifacts, `nanocode-readiness --bundle-out <directory>` exp
 
 </details>
 
-## Further reading
-
-- [Chinese README](./README.zh-CN.md)
-- [Product architecture projection](./Main/NanocodeFrontline/Src/Application/Query/CurrentRuntimeProjection.py)
-- [Memory module](./Package/AgentMemory/Src/Boot/App.py)
-- [Engineering structure checker](./Package/EngineeringStructure/Src/Application/Query/StructureCompliance.py)
-- [TypeScript parity provenance](./Package/EngineeringStructure/Config/ts-parity-provenance.json)
-
-Historical source references: [original terminal project](https://github.com/LiuMengxuan04/MiniCode) and [original Python project](https://github.com/QUSETIONS/MiniCode-Python).

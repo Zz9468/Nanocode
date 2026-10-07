@@ -112,7 +112,7 @@ def main() -> int:
                     "from nanocode.paper_a_retrieval_probe_eval import evaluate_retrieval_probe; "
                     "from nanocode.memory_extraction_eval import DEFAULT_DATA, load_dataset; "
                     "inventory = json.loads(files('Package.EngineeringStructure').joinpath("
-                    "'Config', 'material-inventory.json').read_text(encoding='utf-8')); "
+                    "'Config').joinpath('material-inventory.json').read_text(encoding='utf-8')); "
                     "assert inventory['currentProductApp']['currentSourceRoot'] == 'nanocode'; "
                     "assert len(evaluate_retrieval_probe()) == 36; "
                     "assert len(load_dataset(DEFAULT_DATA / 'golden.json')['cases']) == 80",

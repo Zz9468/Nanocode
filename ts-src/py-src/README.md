@@ -31,8 +31,8 @@
 ### 安装
 
 ```bash
-git clone https://github.com/QUSETIONS/MiniCode-Python.git
-cd Nanocode-Python
+git clone https://github.com/Zz9468/Nanocode.git
+cd Nanocode/ts-src/py-src
 
 # 交互式安装（推荐）
 python -m nanocode.main --install
@@ -171,8 +171,8 @@ nanocode-py
 
 ```bash
 # 克隆仓库
-git clone https://github.com/QUSETIONS/MiniCode-Python.git
-cd Nanocode-Python
+git clone https://github.com/Zz9468/Nanocode.git
+cd Nanocode/ts-src/py-src
 
 # 运行测试
 pip install -e ".[dev]"
@@ -220,8 +220,8 @@ After **8 rounds of systematic optimization** (93+ optimizations), Nanocode Pyth
 ### Installation
 
 ```bash
-git clone https://github.com/QUSETIONS/MiniCode-Python.git
-cd Nanocode-Python
+git clone https://github.com/Zz9468/Nanocode.git
+cd Nanocode/ts-src/py-src
 
 # Interactive installer (recommended)
 python -m nanocode.main --install
@@ -396,8 +396,8 @@ nanocode-py
 
 ```bash
 # Clone
-git clone https://github.com/QUSETIONS/MiniCode-Python.git
-cd Nanocode-Python
+git clone https://github.com/Zz9468/Nanocode.git
+cd Nanocode/ts-src/py-src
 
 # Run tests
 pip install -e ".[dev]"
@@ -421,14 +421,6 @@ NANO_CODE_MODEL_MODE=mock python -m nanocode.main
 
 ---
 
-## 🙏 Acknowledgments
-
-- **[@LiuMengxuan04](https://github.com/LiuMengxuan04)** — Creator of [Nanocode](https://github.com/LiuMengxuan04/MiniCode) (TypeScript original)
-- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** — Design inspiration
-- **All Contributors** — Everyone who contributed to Nanocode
-
----
-
 ## 📄 License
 
 MIT — see [LICENSE](LICENSE) for details.
@@ -437,7 +429,6 @@ MIT — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**🇨🇳 由 [@QUSETIONS](https://github.com/QUSETIONS) 用 ❤️ 制作** | **🇺🇸 Made with ❤️ by [@QUSETIONS](https://github.com/QUSETIONS)**
 
 *轻量终端 AI 编程助手 / Lightweight Terminal AI Coding Assistant*
 
