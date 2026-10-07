@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "materialRoot": "Nanocode-fork",
+  "auditedAt": "2026-06-29",
+  "identity": "comparison-material",
+  "boundary": "Fork comparison material only; no current product app entry or test resolves through Nanocode-fork.",
+  "archiveApproval": {
+    "approvedAt": "2026-06-29",
+    "approvedBy": "workspace owner via chat",
+    "approvedAction": "archival deletion allowed after inventory gates pass",
+    "retainedInPlace": true
+  },
+  "summary": {
+    "fileCountExcludingGitNodeModulesAndExternal": 65,
+    "typescriptSourceFileCount": 45,
+    "referenceDocAssetCount": 0,
+    "binLauncherCount": 1,
+    "externalFileCountExcludingGit": 127,
+    "activeProductCallerCount": 0,
+    "docsReferenceCallerCount": 0
+  },
+  "dispositionPolicy": "Archive-approved historical comparison material. Retained in place until physical deletion is executed deliberately.",
+  "entries": [
+    {
+      "path": "Nanocode-fork/README.md",
+      "status": "comparison-readme-linked",
+      "disposition": "retained-reference",
+      "currentReferences": [],
+      "replacementEvidence": [
+        {
+          "path": "README.md",
+          "reason": "Current product-facing README is owned at the repository root."
+        }
+      ],
+      "nextAction": "Migrate any still-useful comparison note into current docs before deleting the fork.",
+      "archivedDocumentationReferences": [
+        {
+          "collection": "currentReferences",
+          "path": "Docs/Documentation/CODE_WIKI.md",
+          "reason": "Historical wiki explicitly retains Nanocode-fork as an upstream/reference fork."
+        }
+      ]
+    },
+    {
+      "path": "Nanocode-fork/package.json",
+      "status": "comparison-node-package-no-product-caller",
+      "disposition": "retained-reference",
+      "currentReferences": [],
+      "replacementEvidence": [
+        {
+          "path": "pyproject.toml",
+          "reason": "Current product packaging and console scripts are Python-owned."
+        }
+      ],
+      "nextAction": "Do not treat this Node package as a product launcher unless the fork is restored as an explicit app boundary.",
+      "archivedDocumentationReferences": [
+        {
+          "collection": "currentReferences",
+          "path": "Docs/Documentation/CODE_WIKI.md",
+          "reason": "Historical wiki explicitly retains this fork as comparison material."
+        }
+      ]
+    },
+    {
+      "path": "Nanocode-fork/src/index.ts",
+      "status": "comparison-cli-entry-no-product-caller",
+      "disposition": "retained-reference",
+      "currentReferences": [],
+      "replacementEvidence": [
+        {
+          "path": "nanocode/main.py",
+          "reason": "Current interactive CLI lifecycle is owned by the Python app."
+        },
+        {
+          "path": "nanocode/headless.py",
+          "reason": "Current automation lifecycle is owned by the Python app."
+        }
+      ],
+      "nextAction": "Retain only for comparison until docs stop citing the fork.",
+      "archivedDocumentationReferences": [
+        {
+          "collection": "currentReferences",
+          "path": "Docs/Documentation/CODE_WIKI.md",
+          "reason": "Historical wiki explicitly points to the fork for comparison and architecture context."
+        }
+      ]
+    },
+    {
+      "path": "Nanocode-fork/external/Nanocode-Python",
+      "status": "nested-external-reference",
+      "disposition": "retained-reference",
+      "currentReferences": [],
+      "replacementEvidence": [
+        {
+          "path": "Package/EngineeringStructure/Config/material-burndown/ts-src-py-src.json",
+          "reason": "The active legacy Python mirror burn-down is tracked separately under ts-src/py-src."
+        }
+      ],
+      "nextAction": "Treat this nested external copy as comparison-only unless a distinct caller or evidence value is documented.",
+      "archivedDocumentationReferences": [
+        {
+          "collection": "currentReferences",
+          "path": "Docs/Documentation/CODE_WIKI.md",
+          "reason": "Historical wiki explicitly notes the fork includes the external Nanocode-Python material."
+        }
+      ]
+    }
+  ],
+  "historicalSummary": {
+    "fileCountExcludingGitNodeModulesAndExternal": 65,
+    "typescriptSourceFileCount": 45,
+    "referenceDocAssetCount": 12,
+    "binLauncherCount": 1,
+    "externalFileCountExcludingGit": 127,
+    "activeProductCallerCount": 0,
+    "docsReferenceCallerCount": 1
+  },
+  "archivedEntries": [
+    {
+      "path": "Nanocode-fork/docs/index.html",
+      "status": "comparison-docs-site",
+      "disposition": "retained-reference",
+      "currentReferences": [
+        {
+          "path": "Docs/Documentation/CODE_WIKI.md",
+          "reason": "Historical wiki explicitly records the fork as reference material."
+        }
+      ],
+      "replacementEvidence": [
+        {
+          "path": "Docs/Documentation/assets/readme/nanocode-terminal-hero.html",
+          "reason": "Current product-facing visual assets live under Docs/Documentation/assets."
+        }
+      ],
+      "nextAction": "Migrate any useful visual asset into Docs/Documentation/assets before deleting the fork docs site."
+    }
+  ],
+  "publicationPolicy": {
+    "documentation": "README files only",
+    "configuredAt": "2026-10-07",
+    "archivedReferences": "Historical records describe unpublished local materials; active bindings and coverage must resolve to published source, README, configuration, or test inputs."
+  }
+}

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanocode-py"
+version = "0.1.0"
+description = "A lightweight terminal coding assistant for local development workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "hypothesis>=6.0.0", "setuptools>=68"]
+
+[project.scripts]
+nanocode = "nanocode.main:main"
+nanocode-headless = "nanocode.headless:main"
+nanocode-readiness = "nanocode.readiness:main"
+nanocode-structure-check = "nanocode.structure_check:main"
+nanocode-py = "nanocode.main:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nanocode*", "Main*", "Package*"]
+exclude = ["Main.*.Test*", "Package.*.Test*", "Package.AgentMemory.Data*", "Package.AgentMemory.Test*", "Package.AgentMemory.Vendor.MySqlDriver.Package.MySqlAccess.Test*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"Package.EngineeringStructure" = ["Config/*.json", "Config/material-burndown/*.json"]
+"Package.AgentMemory" = ["Config/*.json", "Data/Test/RetrievalProbe/query_rows.json", "Data/Test/ExtractionV2/golden.json"]
+"Package.AgentMemory.Vendor.MySqlDriver.Package.MySqlAccess" = ["ThirdParty/pymysql/*.py", "ThirdParty/pymysql/constants/*.py", "ThirdParty/pymysql-*.dist-info/licenses/*"]
+
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = false

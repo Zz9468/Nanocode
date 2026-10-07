@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "backend": "mysql",
+  "candidate_top_k": 20,
+  "max_candidate_top_k": 50,
+  "rrf_k": 60,
+  "injection_top_k": 5,
+  "injection_token_budget": 1000,
+  "embedding_dimension": 1024,
+  "curator_interval": 10,
+  "model_budget_cny": 25,
+  "pricing_source": "https://help.aliyun.com/zh/model-studio/model-pricing",
+  "verified_pricing_date": "2026-10-06",
+  "prices_cny_per_million_tokens": {
+    "qwen3.8-flash": {"input": 0.8, "output": 2.7},
+    "qwen3.7-text-embedding": {"input": 0.5, "output": 0},
+    "qwen3.7-text-rerank": {"input": 0.5, "output": 0}
+  }
+}

@@ -1,0 +1,60 @@
+# =============================================================================
+# Nanocode Python — Docker ignore
+# =============================================================================
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+.temp/
+.pytest_cache/
+.hypothesis/
+.idea/
+ts-src/
+**/__pycache__/
+**/Test/
+**/Data/**
+!Package/AgentMemory/Data/
+!Package/AgentMemory/Data/Test/
+!Package/AgentMemory/Data/Test/RetrievalProbe/
+!Package/AgentMemory/Data/Test/RetrievalProbe/query_rows.json
+!Package/AgentMemory/Data/Test/ExtractionV2/
+!Package/AgentMemory/Data/Test/ExtractionV2/golden.json
+.nanocode*/
+
+# Test and dev files
+tests/
+benchmarks/
+docs/
+*.md
+!README.md
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Session / log / temp data
+session-log.txt
+*.log
+*.tmp
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db

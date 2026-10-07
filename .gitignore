@@ -1,0 +1,134 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local secrets and provider credentials
+.env
+.env.*
+!.env.example
+paper_experiments/*.env
+paper_experiments/*.env.local
+paper_experiments/.secrets/
+!paper_experiments/env.local.example
+paper_experiments/results/relative_event_target_pairs_cache.json
+
+# Temporary files
+.temp/
+*.tmp
+*.bak
+*.orig
+*.swp
+tmp_*.json
+tmp_*.py
+tmp_*.log
+
+# Local tool/runtime state
+.claude/settings.local.json
+.omx/
+.playwright-mcp/
+.nanocode-memory/*.json
+Package/AgentMemory/Data/Local/
+Package/AgentMemory/Data/Test/Runtime/
+Package/AgentMemory/Data/RenameNanocode/
+Package/AgentMemory/Data/Test/NanocodeRename/
+Package/AgentMemory/Data/Test/rename-*.txt
+
+# Nanocode specific
+.nanocode/
+nanocode_session/
+
+# Local caches / runtime tool state / dead backups (never commit)
+.qwen/
+__pycache__/
+*.git.bak/
+.dead-modules-backup/
+.worktrees/
+
+.nanocode-memory/
+.nanocode-memory-local/
+.nanocode-session-memory/
+
+# Publication: README documentation only; keep other documents locally.
+*.md
+*.txt
+*.rst
+*.adoc
+*.pdf
+*.docx
+*.pptx
+!README*.md
+!LICENSE*
+!NOTICE*
+!COPYING*
+!requirements*.txt
+/Docs/
+/openspec/
+/experiments/
+/outputs/
+/ts-src/docs/
+
+# Personal agent settings and generated reports are not project source.
+/.agents/
+/.claude/
+/.codex/
+/.trae/
+/.workbuddy/
+/.mcp.json
+/ts-src/py-src/.mcp.json
+/ts-src/.gitmodules
+.hypothesis/
+.ruff_cache/
+benchmarks/*_results.json
+
+# Runtime data, credentials, verification archives, and local databases.
+**/Data/**
+!Package/AgentMemory/Data/
+!Package/AgentMemory/Data/Test/
+!Package/AgentMemory/Data/Test/RetrievalProbe/
+!Package/AgentMemory/Data/Test/RetrievalProbe/query_rows.json
+!Package/AgentMemory/Data/Test/ExtractionV2/
+!Package/AgentMemory/Data/Test/ExtractionV2/golden.json
