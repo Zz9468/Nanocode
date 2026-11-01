@@ -62,6 +62,61 @@ def _repo_path_exists(root: Path, path_text: object) -> bool:
     return bool(str(path_text or "").strip()) and path.exists()
 
 
+def _validate_retired_material(
+    root: Path, material: dict[str, Any], label: str, findings: list[dict[str, str]]
+) -> None:
+    """Retired roots must be absent; their historical paths grant no live binding."""
+    raw_path = material.get("path")
+    path = Path(str(raw_path or ""))
+    if not isinstance(raw_path, str) or not path.parts or path.anchor or ".." in path.parts:
+        findings.append(_material_inventory_finding(
+            f"{label} invalid retired material path: {raw_path}",
+            rule_id="MaterialRetirementPath",
+        ))
+        return
+    candidate = root
+    for part in path.parts:
+        candidate /= part
+        if candidate.is_symlink():
+            findings.append(_material_inventory_finding(
+                f"{label} retired material path contains a link: {raw_path}",
+                rule_id="MaterialRetirementPath",
+            ))
+            break
+    else:
+        if candidate.exists():
+            findings.append(_material_inventory_finding(
+                f"{label} retired material must be absent: {raw_path}",
+                rule_id="MaterialRetirementPath",
+            ))
+    if material.get("status") != "retired":
+        findings.append(_material_inventory_finding(
+            f"{label} retired-absent material must have retired status",
+            rule_id="MaterialRetirementState",
+        ))
+    if material.get("currentCallers") != []:
+        findings.append(_material_inventory_finding(
+            f"{label} retired material must have no current callers",
+            rule_id="MaterialRetirementCaller",
+        ))
+    if not material.get("burndownManifest"):
+        findings.append(_material_inventory_finding(
+            f"{label} retired material requires a burndownManifest",
+            rule_id="MaterialRetirementEvidence",
+        ))
+    observed_entries = material.get("observedEntries")
+    if isinstance(observed_entries, list):
+        for entry in observed_entries:
+            if not isinstance(entry, dict):
+                continue
+            observed = Path(str(entry.get("path") or ""))
+            if observed.anchor or ".." in observed.parts or observed.parts[:len(path.parts)] != path.parts:
+                findings.append(_material_inventory_finding(
+                    f"{label} historical observed path is outside retired root: {entry.get('path')}",
+                    rule_id="MaterialRetirementPath",
+                ))
+
+
 def _validate_inventory_path_list(
     *,
     root: Path,
@@ -207,14 +262,17 @@ def check_material_inventory(
         path_text = material.get("path")
         presence_policy = str(material.get("presencePolicy") or "required").strip()
         optional_workspace_material = presence_policy == "optional-workspace-material"
-        if presence_policy not in {"required", "optional-workspace-material"}:
+        retired_material = presence_policy == "retired-absent"
+        if presence_policy not in {"required", "optional-workspace-material", "retired-absent"}:
             findings.append(
                 _material_inventory_finding(
                     f"materials[{index}] has invalid presencePolicy: {presence_policy}",
                     rule_id="MaterialInventoryMaterial",
                 )
             )
-        if not optional_workspace_material and not _repo_path_exists(root_path, path_text):
+        if retired_material:
+            _validate_retired_material(root_path, material, f"materials[{index}]", findings)
+        elif not optional_workspace_material and not _repo_path_exists(root_path, path_text):
             findings.append(
                 _material_inventory_finding(
                     f"materials[{index}] missing repo path: {path_text}",
@@ -255,7 +313,7 @@ def check_material_inventory(
                 collection_label=f"materials[{index}].{collection}",
                 findings=findings,
                 allow_missing_paths=(
-                    optional_workspace_material and collection == "observedEntries"
+                    (optional_workspace_material or retired_material) and collection == "observedEntries"
                 ),
             )
         burndown_manifest = material.get("burndownManifest")

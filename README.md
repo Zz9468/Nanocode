@@ -2,7 +2,7 @@
 
 A Python terminal coding agent with local tools, persistent memory, saved sessions, and checkpointed file recovery.
 
-[中文说明](./README.zh-CN.md) · [GitHub](https://github.com/Zz9468/Nanocode) · [CI configuration](./.github/workflows/ci.yml)
+[中文说明](./README.zh-CN.md) · [GitHub](https://github.com/Zz9468/Nanocode) · [CI configuration](./.github/workflows/ci.yml) · [License](./LICENSE)
 
 Nanocode works in the directory where you start it. You can ask it to inspect a repository, edit files, run development commands, and explain the results. Tools and session storage run locally; model requests go to your configured API provider.
 
@@ -254,7 +254,6 @@ flowchart TD
 | `tests/` | Main Python regression suite. |
 | `benchmarks/` | Evaluation and packaging/release verification runners. |
 | `Package/EngineeringStructure/Config/` | Machine-readable material inventory and migration records. |
-| `ts-src/` | TypeScript comparison and historical source material; not required by the Python quick start. |
 
 The repository is in an ongoing structural migration. The active CLI still lives in `nanocode/`; module boundaries and migration evidence are tracked in the [material inventory](./Package/EngineeringStructure/Config/material-inventory.json). Only README documentation is published. Historical design documents and generated reports stay local; CI validates published code, configuration, and canonical test inputs.
 

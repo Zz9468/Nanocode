@@ -108,7 +108,7 @@
       "replacementEvidence": [
         {
           "path": "Package/EngineeringStructure/Config/material-burndown/ts-src-py-src.json",
-          "reason": "The active legacy Python mirror burn-down is tracked separately under ts-src/py-src."
+          "reason": "Completed legacy Python mirror retirement is recorded in the referenced manifest."
         }
       ],
       "nextAction": "Treat this nested external copy as comparison-only unless a distinct caller or evidence value is documented."

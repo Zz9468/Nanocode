@@ -78,9 +78,9 @@
         "py-src"
       ],
       "identity": "legacy-python-source-material",
-      "status": "inventory-recorded-legacy-only-modules-retired",
+      "status": "retired",
       "burndownManifest": "Package/EngineeringStructure/Config/material-burndown/ts-src-py-src.json",
-      "callerSummary": "No runtime caller in the active product app; historical docs still refer to the old py-src root.",
+      "callerSummary": "Removed from the working tree; no active product entry or runtime caller uses this historical source.",
       "currentCallers": [],
       "observedEntries": [
         {
@@ -97,7 +97,7 @@
       "coverageEvidence": [
         {
           "path": "Package/EngineeringStructure/Config/material-burndown/ts-src-py-src.json",
-          "reason": "legacy-only module closure is tracked capability-by-capability and current-code name residues are cleared"
+          "reason": "Completed source retirement and current replacement evidence are recorded in this manifest."
         },
         {
           "path": "tests/test_engineering_inventory.py",
@@ -105,7 +105,7 @@
         }
       ],
       "replacementTarget": "nanocode",
-      "retirementCondition": "Module-level burn-down is closed: all 11 legacy-only modules are retired unless a current product caller, documented product surface, and focused tests are added in nanocode/.",
+      "retirementCondition": "Completed: source removed; current Python behavior and retirement evidence remain independently verifiable.",
       "archivedDocumentationReferences": [
         {
           "collection": "currentCallers",
@@ -128,15 +128,18 @@
           "path": "ts-src/py-src/USAGE_GUIDE.md",
           "result": "legacy usage and operational notes"
         }
-      ]
+      ],
+      "presencePolicy": "retired-absent",
+      "retiredAt": "2026-10-31",
+      "sourceCommit": "ab2bd86cb79108bf22604e5c599b36f65ef4da8f"
     },
     {
       "path": "ts-src",
       "historicalAliases": [],
       "identity": "legacy-typescript-material",
-      "status": "archive-approved-reference-only-retained-in-place",
+      "status": "retired",
       "burndownManifest": "Package/EngineeringStructure/Config/material-burndown/ts-src.json",
-      "callerSummary": "Docs-only and comparison-only material; no active product entry resolves through ts-src.",
+      "callerSummary": "Removed from the working tree; no active product entry or runtime caller uses this historical source.",
       "currentCallers": [],
       "historicalReferences": [],
       "observedEntries": [
@@ -159,15 +162,19 @@
       "coverageEvidence": [
         {
           "path": "Package/EngineeringStructure/Config/material-burndown/ts-src.json",
-          "reason": "TypeScript package, launcher, entry, docs, and nested py-src delegation are tracked as reference material"
+          "reason": "Completed source retirement and current replacement evidence are recorded in this manifest."
         },
         {
           "path": "tests/test_engineering_inventory.py",
           "reason": "inventory schema and path coverage are enforced"
+        },
+        {
+          "path": "LICENSE",
+          "reason": "The existing MIT notice was relocated from the retired source tree without changing its contents."
         }
       ],
-      "replacementTarget": "Docs/Documentation/assets or current app docs when value is product-facing",
-      "retirementCondition": "Archive approval recorded; physical deletion can proceed after inventory gates pass and dirty-worktree handling is explicit.",
+      "replacementTarget": "nanocode",
+      "retirementCondition": "Completed: source removed; current Python behavior and retirement evidence remain independently verifiable.",
       "archivedDocumentationReferences": [
         {
           "collection": "coverageEvidence",
@@ -179,7 +186,10 @@
           "path": "Docs/Documentation/CODE_WIKI.md",
           "reason": "historical architecture notes explicitly retain TypeScript tree references"
         }
-      ]
+      ],
+      "presencePolicy": "retired-absent",
+      "retiredAt": "2026-10-31",
+      "sourceCommit": "ab2bd86cb79108bf22604e5c599b36f65ef4da8f"
     },
     {
       "path": "Nanocode-fork",

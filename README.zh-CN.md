@@ -2,7 +2,7 @@
 
 基于 Python 的终端编码助手，支持本地工具、持久记忆、会话保存和文件编辑回退。
 
-[English](./README.md) · [GitHub 仓库](https://github.com/Zz9468/Nanocode) · [CI 配置](./.github/workflows/ci.yml)
+[English](./README.md) · [GitHub 仓库](https://github.com/Zz9468/Nanocode) · [CI 配置](./.github/workflows/ci.yml) · [许可证](./LICENSE)
 
 Nanocode 在启动时所在的目录工作。你可以让它阅读仓库、修改文件、执行开发命令并解释结果。工具执行和会话存储发生在本地，模型请求发送到你配置的 API 服务。
 
@@ -254,7 +254,6 @@ flowchart TD
 | `tests/` | 主要 Python 回归测试。 |
 | `benchmarks/` | 评估、打包和发布验证脚本。 |
 | `Package/EngineeringStructure/Config/` | 机器可读的材料清单与迁移记录。 |
-| `ts-src/` | TypeScript 对照与历史源码材料，Python 快速开始不依赖它。 |
 
 仓库仍在进行结构迁移，当前 CLI 实现在 `nanocode/`。模块边界与迁移证据见[材料清单](./Package/EngineeringStructure/Config/material-inventory.json)。公开仓库只保留 README 类文档；历史设计文档和生成报告留在本地，CI 检查已提交的代码、配置与真实测试输入。
 

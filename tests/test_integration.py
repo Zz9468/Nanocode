@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-# Ensure py-src is on path
+# Ensure the project root is on path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nanocode.agent_loop import run_agent_turn

@@ -16,7 +16,6 @@ build/
 .pytest_cache/
 .hypothesis/
 .idea/
-ts-src/
 **/__pycache__/
 **/Test/
 **/Data/**

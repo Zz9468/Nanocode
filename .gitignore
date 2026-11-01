@@ -109,7 +109,6 @@ __pycache__/
 /openspec/
 /experiments/
 /outputs/
-/ts-src/docs/
 
 # Personal agent settings and generated reports are not project source.
 /.agents/
@@ -118,8 +117,6 @@ __pycache__/
 /.trae/
 /.workbuddy/
 /.mcp.json
-/ts-src/py-src/.mcp.json
-/ts-src/.gitmodules
 .hypothesis/
 .ruff_cache/
 benchmarks/*_results.json

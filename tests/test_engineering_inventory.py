@@ -23,6 +23,11 @@ def _assert_repo_path_exists(path_text: str) -> None:
     assert path.exists(), f"expected repo path to exist: {path_text}"
 
 
+def _assert_retired_path_absent(path_text: str) -> None:
+    path = ROOT / path_text
+    assert not path.exists() and not path.is_symlink(), f"retired path reappeared: {path_text}"
+
+
 def _assert_repo_or_optional_material_path(path_text: str) -> None:
     path = ROOT / path_text
     if path.exists():
@@ -106,14 +111,22 @@ def test_material_inventory_materials_are_observed_and_evidenced() -> None:
         optional_workspace_material = (
             material.get("presencePolicy") == "optional-workspace-material"
         )
-        if not optional_workspace_material:
+        retired_material = material.get("presencePolicy") == "retired-absent"
+        if retired_material:
+            assert material["status"] == "retired"
+            assert material["currentCallers"] == []
+            _assert_retired_path_absent(material["path"])
+        elif not optional_workspace_material:
             _assert_repo_path_exists(material["path"])
 
         assert material["observedEntries"], f"{material['path']} is missing observedEntries"
         for entry in material["observedEntries"]:
             assert entry["name"]
             assert entry["result"]
-            if not optional_workspace_material:
+            if retired_material:
+                assert Path(entry["path"]).is_relative_to(Path(material["path"]))
+                _assert_retired_path_absent(entry["path"])
+            elif not optional_workspace_material:
                 _assert_repo_path_exists(entry["path"])
 
         assert material["coverageEvidence"], f"{material['path']} is missing coverageEvidence"
@@ -137,7 +150,7 @@ def test_archive_approved_materials_have_no_current_callers() -> None:
     inventory = _load_inventory()
     materials = {item["path"]: item for item in inventory["materials"]}
 
-    for path in ("ts-src", "Nanocode-fork", "Nanocode-main-work"):
+    for path in ("Nanocode-fork", "Nanocode-main-work"):
         material = materials[path]
         assert material["status"].startswith("archive-approved-")
         assert material["currentCallers"] == []
@@ -151,6 +164,20 @@ def test_archive_approved_materials_have_no_current_callers() -> None:
             and reference["reason"]
             for reference in references
         )
+
+
+def test_retired_source_roots_are_absent_and_have_current_evidence() -> None:
+    materials = {item["path"]: item for item in _load_inventory()["materials"]}
+    for path in ("ts-src", "ts-src/py-src"):
+        material = materials[path]
+        assert material["presencePolicy"] == "retired-absent"
+        assert material["status"] == "retired"
+        assert material["currentCallers"] == []
+        assert material["retiredAt"] == "2026-10-31"
+        assert len(material["sourceCommit"]) == 40
+        _assert_retired_path_absent(path)
+        for evidence in material["coverageEvidence"]:
+            _assert_repo_path_exists(evidence["path"])
 
 
 def test_material_inventory_focused_gates_remain_portable() -> None:
@@ -284,18 +311,21 @@ def test_ts_src_py_src_burndown_manifest_tracks_legacy_only_modules() -> None:
     manifest = _load_repo_json("Package/EngineeringStructure/Config/material-burndown/ts-src-py-src.json")
 
     assert manifest["materialRoot"] == "ts-src/py-src"
-    assert manifest["summary"]["legacyOnlyRelativePathCount"] == 11
-    assert manifest["summary"]["sharedLegacyTestFileCount"] == 16
+    assert manifest["status"] == "retired"
+    assert manifest["presencePolicy"] == "retired-absent"
+    assert manifest["summary"]["retainedSourceFileCount"] == 0
+    assert manifest["historicalSummary"]["legacyOnlyRelativePathCount"] == 11
+    assert manifest["historicalSummary"]["sharedLegacyTestFileCount"] == 16
 
     entries = {entry["legacyRelativePath"]: entry for entry in manifest["entries"]}
     assert len(entries) == 11
 
-    assert entries["async_context.py"]["status"] == "legacy-only-no-current-caller"
+    assert entries["async_context.py"]["status"] == "retired"
     assert manifest["summary"]["currentNameResidueCount"] == 0
     assert manifest["summary"]["retiredLegacyOnlyModuleCount"] == 11
     assert manifest["dispositionPolicy"].startswith("Legacy-only modules are retired")
-    assert entries["tools/multi_edit.py"]["status"] == "legacy-only-no-current-caller"
-    assert entries["tools/run_with_debug.py"]["status"] == "legacy-only-no-current-caller"
+    assert entries["tools/multi_edit.py"]["status"] == "retired"
+    assert entries["tools/run_with_debug.py"]["status"] == "retired"
     assert not entries["tools/multi_edit.py"]["currentReferences"]
     assert not entries["tools/run_with_debug.py"]["currentReferences"]
     assert entries["tools/multi_edit.py"]["disposition"] == "retired"
@@ -307,7 +337,8 @@ def test_ts_src_py_src_burndown_manifest_tracks_legacy_only_modules() -> None:
     )
 
     for entry in manifest["entries"]:
-        _assert_repo_path_exists(entry["legacyPath"])
+        assert "legacyPath" not in entry
+        _assert_retired_path_absent(entry["historicalPath"])
         assert entry["disposition"] == "retired"
         for current in entry["currentReferences"]:
             assert current["reason"]
@@ -336,37 +367,37 @@ def test_legacy_only_tool_names_are_not_live_current_code_heuristics() -> None:
             assert tool_name not in source, f"stale legacy tool name in {source_path}"
 
 
-def test_ts_src_burndown_manifest_tracks_reference_boundary() -> None:
+def test_ts_src_burndown_manifest_tracks_completed_retirement() -> None:
     manifest = _load_repo_json("Package/EngineeringStructure/Config/material-burndown/ts-src.json")
 
     assert manifest["materialRoot"] == "ts-src"
+    assert manifest["status"] == "retired"
+    assert manifest["presencePolicy"] == "retired-absent"
     assert manifest["summary"]["activeProductCallerCount"] == 0
-    assert manifest["summary"]["typescriptSourceFileCount"] == 45
-    assert manifest["summary"]["delegatedNestedMaterialCount"] == 1
+    assert manifest["summary"]["retainedSourceFileCount"] == 0
+    assert manifest["summary"]["retiredTypeScriptSourceFileCount"] == 45
+    assert manifest["summary"]["retiredNestedMaterialCount"] == 1
     assert manifest["summary"]["docsReferenceCallerCount"] == 0
     assert manifest["historicalSummary"]["docsReferenceCallerCount"] == 1
     assert manifest["archiveApproval"]["approvedAction"] == (
         "archival deletion allowed after inventory gates pass"
     )
-    assert manifest["archiveApproval"]["retainedInPlace"] is True
+    assert manifest["archiveApproval"]["retainedInPlace"] is False
     assert manifest["dispositionPolicy"].startswith(
-        "Archive-approved reference material"
-    )
-    assert "current product-facing docs no longer link into ts-src" in (
-        manifest["dispositionPolicy"]
+        "Retirement completed."
     )
 
-    entries = {entry["path"]: entry for entry in manifest["entries"]}
-    assert entries["ts-src/package.json"]["status"] == (
-        "legacy-node-package-no-product-caller"
-    )
+    entries = {entry["historicalPath"]: entry for entry in manifest["entries"]}
+    assert entries["ts-src/package.json"]["status"] == "retired"
     assert entries["ts-src/src/index.ts"]["replacementEvidence"][0]["path"] == (
         "nanocode/main.py"
     )
-    assert entries["ts-src/py-src"]["disposition"] == "delegated"
-    assert entries["ts-src/py-src"]["currentReferences"][0]["path"] == (
+    assert entries["ts-src/py-src"]["disposition"] == "retired"
+    assert entries["ts-src/py-src"]["replacementEvidence"][0]["path"] == (
         "Package/EngineeringStructure/Config/material-burndown/ts-src-py-src.json"
     )
+    assert entries["ts-src/LICENSE"]["disposition"] == "relocated"
+    assert entries["ts-src/LICENSE"]["replacementEvidence"][0]["path"] == "LICENSE"
     archived = {entry["path"]: entry for entry in manifest["archivedEntries"]}
     assert "ts-src/ARCHITECTURE_ZH.md" not in entries
     assert not archived["ts-src/ARCHITECTURE_ZH.md"]["currentReferences"]
@@ -376,13 +407,16 @@ def test_ts_src_burndown_manifest_tracks_reference_boundary() -> None:
         assert "./Package/EngineeringStructure/Config/material-inventory.json" in readme
         assert "./Docs/" not in readme
         assert "./AGENTS.md" not in readme
+        assert "`ts-src/`" not in readme
+        assert "(./LICENSE)" in readme
 
     for entry in manifest["entries"]:
-        _assert_repo_or_optional_material_path(entry["path"])
-        assert entry["disposition"] in {"retained-reference", "delegated"}
+        assert "path" not in entry
+        _assert_retired_path_absent(entry["historicalPath"])
+        assert entry["disposition"] in {"retired", "relocated"}
         for current in entry["currentReferences"]:
             assert current["reason"]
-            _assert_repo_or_optional_material_path(current["path"])
+            _assert_repo_path_exists(current["path"])
         for evidence in entry["replacementEvidence"]:
             assert evidence["reason"]
             _assert_repo_path_exists(evidence["path"])

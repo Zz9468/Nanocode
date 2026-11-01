@@ -3,28 +3,25 @@
   "materialRoot": "ts-src",
   "auditedAt": "2026-06-29",
   "identity": "legacy-typescript-material",
-  "boundary": "Reference and comparison material only; no current product app entry resolves through ts-src.",
+  "boundary": "Historical TypeScript and nested Python source copies are retired and absent; current product entry points are Python-owned.",
   "archiveApproval": {
     "approvedAt": "2026-06-29",
     "approvedBy": "workspace owner via chat",
     "approvedAction": "archival deletion allowed after inventory gates pass",
-    "retainedInPlace": true
+    "retainedInPlace": false
   },
   "summary": {
-    "fileCountExcludingNestedPySrcAndNodeModules": 67,
-    "typescriptSourceFileCount": 45,
-    "referenceDocAssetCount": 0,
-    "binLauncherCount": 3,
+    "retainedSourceFileCount": 0,
+    "retiredTypeScriptSourceFileCount": 45,
     "activeProductCallerCount": 0,
     "docsReferenceCallerCount": 0,
-    "delegatedNestedMaterialCount": 1
+    "retiredNestedMaterialCount": 1
   },
-  "dispositionPolicy": "Archive-approved reference material. CODE_WIKI links are explicitly historical and current product-facing docs no longer link into ts-src.",
+  "dispositionPolicy": "Retirement completed. Historical paths document removed material; current product code and regression tests are the live evidence.",
   "entries": [
     {
-      "path": "ts-src/package.json",
-      "status": "legacy-node-package-no-product-caller",
-      "disposition": "retained-reference",
+      "status": "retired",
+      "disposition": "retired",
       "currentReferences": [],
       "replacementEvidence": [
         {
@@ -36,19 +33,18 @@
           "reason": "Current interactive product lifecycle enters through the Python CLI."
         }
       ],
-      "nextAction": "Do not treat the Node package as a product launcher unless a current product owner restores a TypeScript app boundary.",
       "archivedDocumentationReferences": [
         {
           "collection": "currentReferences",
           "path": "Docs/Documentation/CODE_WIKI.md",
           "reason": "Historical wiki describes the TypeScript version and its Node package workflow."
         }
-      ]
+      ],
+      "historicalPath": "ts-src/package.json"
     },
     {
-      "path": "ts-src/bin/nanocode",
-      "status": "legacy-launcher-no-product-caller",
-      "disposition": "retained-reference",
+      "status": "retired",
+      "disposition": "retired",
       "currentReferences": [],
       "replacementEvidence": [
         {
@@ -56,19 +52,18 @@
           "reason": "Current console scripts are declared by the Python package."
         }
       ],
-      "nextAction": "Keep only as TypeScript reference launcher unless docs are migrated away from it.",
       "archivedDocumentationReferences": [
         {
           "collection": "currentReferences",
           "path": "Docs/Documentation/CODE_WIKI.md",
           "reason": "Historical wiki documents TypeScript execution paths."
         }
-      ]
+      ],
+      "historicalPath": "ts-src/bin/nanocode"
     },
     {
-      "path": "ts-src/src/index.ts",
-      "status": "legacy-cli-entry-no-product-caller",
-      "disposition": "retained-reference",
+      "status": "retired",
+      "disposition": "retired",
       "currentReferences": [],
       "replacementEvidence": [
         {
@@ -80,32 +75,38 @@
           "reason": "Current non-interactive automation lifecycle is owned by the Python app."
         }
       ],
-      "nextAction": "Retain for architecture comparison until TypeScript references are removed from current docs.",
       "archivedDocumentationReferences": [
         {
           "collection": "currentReferences",
           "path": "Docs/Documentation/CODE_WIKI.md",
           "reason": "Historical wiki links to the TypeScript CLI entry for architecture comparison."
         }
-      ]
+      ],
+      "historicalPath": "ts-src/src/index.ts"
     },
     {
-      "path": "ts-src/py-src",
-      "status": "delegated-nested-material",
-      "disposition": "delegated",
-      "currentReferences": [
-        {
-          "path": "Package/EngineeringStructure/Config/material-burndown/ts-src-py-src.json",
-          "reason": "Nested legacy Python source has its own module-level burn-down manifest."
-        }
-      ],
+      "status": "retired",
+      "disposition": "retired",
+      "currentReferences": [],
       "replacementEvidence": [
         {
           "path": "Package/EngineeringStructure/Config/material-burndown/ts-src-py-src.json",
           "reason": "The nested material root is handled independently to avoid mixing Python mirror disposition with TypeScript reference disposition."
         }
       ],
-      "nextAction": "Follow the nested material manifest for Python mirror retirement decisions."
+      "historicalPath": "ts-src/py-src"
+    },
+    {
+      "historicalPath": "ts-src/LICENSE",
+      "status": "relocated-license",
+      "disposition": "relocated",
+      "currentReferences": [],
+      "replacementEvidence": [
+        {
+          "path": "LICENSE",
+          "reason": "The original MIT notice is retained verbatim at the product project root."
+        }
+      ]
     }
   ],
   "historicalSummary": {
@@ -121,20 +122,19 @@
     {
       "path": "ts-src/docs/index.html",
       "status": "legacy-docs-site-reference",
-      "disposition": "retained-reference",
+      "disposition": "retired",
       "currentReferences": [],
       "replacementEvidence": [
         {
           "path": "Docs/Documentation/assets/readme/nanocode-terminal-hero.html",
           "reason": "Current product-facing README asset work lives under Docs/Documentation/assets."
         }
-      ],
-      "nextAction": "Migrate any still-useful user-facing site asset into Docs/Documentation/assets before deleting the TypeScript docs site."
+      ]
     },
     {
       "path": "ts-src/ARCHITECTURE_ZH.md",
       "status": "legacy-reference-doc-linked",
-      "disposition": "retained-reference",
+      "disposition": "retired",
       "currentReferences": [],
       "replacementEvidence": [
         {
@@ -145,13 +145,16 @@
           "path": "Package/EngineeringStructure/Config/nanocode-app-projection.md",
           "reason": "Current product boundary and material classification are documented there."
         }
-      ],
-      "nextAction": "Either migrate the useful architecture content into current docs or mark the link as historical comparison only."
+      ]
     }
   ],
   "publicationPolicy": {
     "documentation": "README files only",
     "configuredAt": "2026-10-07",
     "archivedReferences": "Historical records describe unpublished local materials; active bindings and coverage must resolve to published source, README, configuration, or test inputs."
-  }
+  },
+  "status": "retired",
+  "presencePolicy": "retired-absent",
+  "retiredAt": "2026-10-31",
+  "sourceCommit": "ab2bd86cb79108bf22604e5c599b36f65ef4da8f"
 }

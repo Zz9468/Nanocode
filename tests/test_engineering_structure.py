@@ -201,6 +201,92 @@ def test_material_inventory_allows_declared_optional_workspace_material_to_be_ab
     assert "workspace-reference/README.md" not in messages
 
 
+@pytest.fixture
+def retired_inventory_root(tmp_path: Path) -> Path:
+    """A complete inventory whose only historical source root is retired."""
+    source_inventory = json.loads(
+        (Path(__file__).resolve().parent.parent / "Package" / "EngineeringStructure"
+         / "Config" / "material-inventory.json").read_text(encoding="utf-8")
+    )
+    documented_commands = "\n".join(gate["command"] for gate in source_inventory["focusedGates"])
+    for name in ("README.md", "README.zh-CN.md"):
+        (tmp_path / name).write_text(documented_commands, encoding="utf-8")
+    config_dir = tmp_path / "Package" / "EngineeringStructure" / "Config"
+    config_dir.mkdir(parents=True)
+    manifest_path = config_dir / "retirement.json"
+    manifest_path.write_text(
+        json.dumps({"materialRoot": "retired-source", "status": "retired"}),
+        encoding="utf-8",
+    )
+    inventory = {
+        "schemaVersion": 2,
+        "currentProductApp": {
+            "logicalBoundary": "product/app/nanocode_frontline",
+            "currentSourceRoot": "nanocode",
+            "entrySurfaces": [{"path": "README.md"}],
+            "coverageEvidence": [{"path": "README.md"}],
+        },
+        "materials": [{
+            "path": "retired-source",
+            "identity": "historical source",
+            "status": "retired",
+            "presencePolicy": "retired-absent",
+            "callerSummary": "No current caller uses this removed source.",
+            "replacementTarget": "README.md",
+            "retirementCondition": "Removed with current evidence retained.",
+            "observedEntries": [{"path": "retired-source/main.py"}],
+            "coverageEvidence": [{"path": "README.md"}],
+            "currentCallers": [],
+            "historicalReferences": [],
+            "burndownManifest": "Package/EngineeringStructure/Config/retirement.json",
+        }],
+        "focusedGates": source_inventory["focusedGates"],
+    }
+    (config_dir / "material-inventory.json").write_text(
+        json.dumps(inventory), encoding="utf-8",
+    )
+    return tmp_path
+
+
+def test_material_inventory_accepts_completed_retirement(retired_inventory_root: Path) -> None:
+    assert check_material_inventory(retired_inventory_root)["passed"] is True
+
+
+@pytest.mark.parametrize("carrier", ["directory", "file"])
+def test_material_inventory_rejects_reappearing_retired_root(
+    retired_inventory_root: Path, carrier: str,
+) -> None:
+    path = retired_inventory_root / "retired-source"
+    if carrier == "directory":
+        path.mkdir()
+    else:
+        path.write_text("Historical source must stay retired.", encoding="utf-8")
+    result = check_material_inventory(retired_inventory_root)
+    assert result["passed"] is False
+    assert any("retired material must be absent" in finding["message"] for finding in result["findings"])
+
+
+@pytest.mark.parametrize(("field", "value", "message"), [
+    ("currentCallers", [{"path": "README.md"}], "must have no current callers"),
+    ("status", "active", "must have retired status"),
+    ("burndownManifest", "", "requires a burndownManifest"),
+    ("burndownManifest", "missing.json", "missing burndownManifest path"),
+    ("coverageEvidence", [{"path": "missing.py"}], "missing repo path: missing.py"),
+    ("path", "../retired-source", "invalid retired material path"),
+    ("observedEntries", [{"path": "other-source/main.py"}], "outside retired root"),
+])
+def test_retirement_keeps_live_bindings_and_evidence_strict(
+    retired_inventory_root: Path, field: str, value: object, message: str,
+) -> None:
+    path = retired_inventory_root / "Package" / "EngineeringStructure" / "Config" / "material-inventory.json"
+    inventory = json.loads(path.read_text(encoding="utf-8"))
+    inventory["materials"][0][field] = value
+    path.write_text(json.dumps(inventory), encoding="utf-8")
+    result = check_material_inventory(retired_inventory_root)
+    assert result["passed"] is False
+    assert any(message in finding["message"] for finding in result["findings"])
+
+
 def test_structure_check_cli_can_print_impact_hotspots(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

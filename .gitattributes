@@ -36,7 +36,6 @@ Makefile text eol=lf
 
 # Node.js files (package-lock must stay as-is to avoid npm issues)
 package-lock.json binary
-ts-src/package-lock.json binary
 
 # Exclude nested git repos from top-level tracking
 Nanocode-fork/

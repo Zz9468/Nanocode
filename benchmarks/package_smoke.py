@@ -8,8 +8,10 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import venv
+import zipfile
 from pathlib import Path
 
 
@@ -61,6 +63,35 @@ def _venv_entrypoint(venv_dir: Path, name: str) -> Path:
     return venv_dir / directory / f"{name}{suffix}"
 
 
+def _verify_retired_source_and_license(artifact: Path) -> None:
+    """Both release formats must omit retired source and retain the MIT notice."""
+    expected_license = (ROOT / "LICENSE").read_bytes()
+    if artifact.suffix == ".whl":
+        with zipfile.ZipFile(artifact) as archive:
+            names = archive.namelist()
+            notices = [name for name in names if (
+                len(Path(name).parts) >= 2
+                and Path(name).parts[0].startswith("nanocode_py-")
+                and Path(name).parts[0].endswith(".dist-info")
+                and name.endswith((".dist-info/LICENSE", ".dist-info/licenses/LICENSE"))
+            )]
+            license_contents = [archive.read(name) for name in notices]
+    else:
+        with tarfile.open(artifact, "r:gz") as archive:
+            names = archive.getnames()
+            notices = [name for name in names if len(Path(name).parts) == 2 and Path(name).name == "LICENSE"]
+            license_contents = []
+            for name in notices:
+                source = archive.extractfile(name)
+                if source is not None:
+                    with source:
+                        license_contents.append(source.read())
+    if any("ts-src" in Path(name).parts for name in names):
+        raise RuntimeError(f"retired ts-src tree is included in {artifact.name}")
+    if license_contents != [expected_license]:
+        raise RuntimeError(f"original MIT notice missing or changed in {artifact.name}")
+
+
 def main() -> int:
     temp_dir = "/tmp" if os.name != "nt" and Path("/tmp").is_dir() else None
     with tempfile.TemporaryDirectory(
@@ -94,6 +125,7 @@ def main() -> int:
             )
 
         for label, artifact in (("wheel", wheels[0]), ("sdist", sdists[0])):
+            _verify_retired_source_and_license(artifact)
             env_dir = work / f"{label}-venv"
             venv.EnvBuilder(
                 symlinks=os.name != "nt",

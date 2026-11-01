@@ -1,8 +1,7 @@
 """Tests ported from the TypeScript parity provenance record.
 
-These translate the TS reference scenarios into pytest so the Python port can be
-checked against the same expectations. The TS suite is green (200/0); any failure
-here is a real divergence / bug in the Python port.
+These retain the recorded TS reference scenarios as Python behavior regressions.
+They exercise current Python modules independently of the retired source trees.
 
 Stable provenance:
   - Package/EngineeringStructure/Config/ts-parity-provenance.json
