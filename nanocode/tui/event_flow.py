@@ -15,6 +15,7 @@ from nanocode.tui.navigation import (
     _toggle_pending_approval_expand,
 )
 from nanocode.tui.state import ScreenState, TtyAppArgs
+from nanocode.tui.selection import handle_transcript_selection
 
 
 def _handle_event(
@@ -26,7 +27,14 @@ def _handle_event(
     approval_result: dict[str, Any],
     handle_input_fn: Callable[[TtyAppArgs, ScreenState, Callable[[], None], str | None], bool],
 ) -> None:
-    if isinstance(event, TextEvent) and event.ctrl and event.text == "c":
+    if state.pending_approval is None and handle_transcript_selection(state, event):
+        rerender()
+        return
+    if (
+        isinstance(event, KeyEvent) and event.ctrl and event.name == "c"
+    ) or (
+        isinstance(event, TextEvent) and event.ctrl and event.text == "c"
+    ):
         raise SystemExit(0)
 
     pending = state.pending_approval
@@ -218,9 +226,6 @@ def _handle_normal_mode_key(
         _handle_normal_mode_tab(state, visible_commands, rerender)
         return True
 
-    if _handle_normal_mode_navigation(state, event, rerender):
-        return True
-
     if event.name == "pageup" and _scroll_transcript_by(args, state, 8):
         rerender()
         return True
@@ -243,6 +248,9 @@ def _handle_normal_mode_key(
     if event.name == "end" and event.ctrl:
         state.transcript_scroll_offset = 0
         rerender()
+        return True
+
+    if _handle_normal_mode_navigation(state, event, rerender):
         return True
 
     if event.name == "up":

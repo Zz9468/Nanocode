@@ -24,10 +24,10 @@ def create_memory_manager(workspace):
         return manager
     return MemoryManager(project_root=workspace)
 
-def shutdown_memory(manager, timeout=60):
+def shutdown_memory(manager, timeout=60, *, drain=True):
     service = getattr(manager, "_service", None)
     if service is not None:
-        return service.close(timeout)
+        return service.close(timeout, drain=drain)
     return {}
 
 class BudgetedMemoryModel:

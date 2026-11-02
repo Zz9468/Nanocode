@@ -31,7 +31,7 @@ def _get_transcript_body_lines(args: TtyAppArgs, state: ScreenState) -> int:
 
 def _get_max_transcript_scroll_offset(args: TtyAppArgs, state: ScreenState) -> int:
     return get_transcript_max_scroll_offset(
-        state.transcript,
+        state.visible_transcript,
         _get_transcript_body_lines(args, state),
         state.transcript_revision,
     )
@@ -112,6 +112,11 @@ def _history_down(state: ScreenState) -> bool:
 
 def _get_visible_commands(input_text: str) -> list[Any]:
     if not input_text.startswith("/"):
+        return []
+    # Completed commands and arguments are ready to submit, not menu choices.
+    if any(char.isspace() for char in input_text) or any(
+        input_text == command.name for command in SLASH_COMMANDS
+    ):
         return []
     if input_text == "/":
         return SLASH_COMMANDS

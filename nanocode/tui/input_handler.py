@@ -16,10 +16,12 @@ from nanocode.prompt import build_system_prompt_bundle
 from nanocode.tooling import ToolContext
 from nanocode.types import RuntimeEvent
 from nanocode.tui.session_flow import refresh_tty_session_snapshot
+from nanocode.tui.selection import clear_transcript_selection
 from nanocode.tui.tool_helpers import _summarize_tool_input, _is_file_edit_tool, _extract_path_from_tool_input, _summarize_collapsed_tool_body
 from nanocode.tui.tool_lifecycle import _push_transcript_entry, _update_tool_entry, _update_transcript_entry, _append_to_transcript_entry, _collapse_tool_entry, _finalize_dangling_running_tools, _get_running_tool_entries, _schedule_tool_auto_collapse
 
 logger = logging.getLogger("nanocode.input_handler")
+_windows_console_input = None
 
 # Cross-platform raw mode stdin
 # ---------------------------------------------------------------------------
@@ -100,6 +102,8 @@ def _read_raw_char() -> str:
 def _read_raw_chunk() -> str:
     """Read all available raw chars as a single chunk."""
     if sys.platform == "win32":
+        if _windows_console_input is not None:
+            return _windows_console_input.read()
         result = ""
         while True:
             ch = _win_read_one_key()
@@ -137,9 +141,8 @@ class _RawModeContext:
     """Context manager for raw terminal mode.
 
     On Unix: switches stdin to raw mode via termios/tty and restores on exit.
-    On Windows: msvcrt provides character-at-a-time input natively, but we
-    need to ensure the console code page is set for UTF-8 and VT processing
-    is enabled.
+    On Windows: save the console mode, read native key/mouse records, and
+    restore the shell's mode and output code page on exit.
     """
 
     def __init__(self) -> None:
@@ -148,10 +151,15 @@ class _RawModeContext:
         self._old_sigwinch: Any = None
 
     def __enter__(self) -> _RawModeContext:
+        global _windows_console_input
         if sys.platform == "win32":
             # Ensure VT processing is active (idempotent)
             from nanocode.tui.screen import _enable_windows_vt_processing
             _enable_windows_vt_processing()
+            from nanocode.tui.windows_console import WindowsConsoleInput
+            self._previous_console_input = _windows_console_input
+            self._console_input = WindowsConsoleInput(_WIN_SCANCODE_TO_ANSI)
+            _windows_console_input = self._console_input
             # Switch console to UTF-8 code page for proper Unicode handling
             try:
                 import ctypes
@@ -204,13 +212,18 @@ class _RawModeContext:
         return self
 
     def __exit__(self, *_: Any) -> None:
+        global _windows_console_input
         if sys.platform == "win32":
-            if self._old_cp is not None:
-                try:
-                    import ctypes
-                    ctypes.windll.kernel32.SetConsoleOutputCP(self._old_cp)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
+            try:
+                self._console_input.close()
+            finally:
+                _windows_console_input = self._previous_console_input
+                if self._old_cp is not None:
+                    try:
+                        import ctypes
+                        ctypes.windll.kernel32.SetConsoleOutputCP(self._old_cp)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
         elif self._old_settings is not None:
             import termios
             import signal
@@ -322,6 +335,18 @@ def _handle_input(
     # Autosave trigger
     if state.autosave:
         state.autosave.mark_dirty()
+
+    if input_text == "/clear":
+        clear_transcript_selection(state)
+        state.transcript_view_start = len(state.transcript)
+        state.transcript_scroll_offset = 0
+        state.transcript_viewport = None
+        _push_transcript_entry(
+            state,
+            kind="assistant",
+            body="Transcript view cleared. Model context, session history and checkpoints are retained.",
+        )
+        return False
 
     # /tools
     if input_text == "/tools":

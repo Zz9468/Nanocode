@@ -11,14 +11,12 @@ ERASE_SCREEN_AND_HOME = "\u001b[2J\u001b[H"
 #   ?1002h  — button-event tracking (only reports while button pressed, can interfere)
 #   ?1003h  — any-event tracking (reports all mouse events including scroll without button)
 #   ?1006h  — SGR extended encoding (supports coordinates > 223, required for modern terminals)
-# Strategy: use ?1000h (basic) + ?1003h (any-event for reliable scroll) + ?1006h (SGR format)
-# This matches the TypeScript nanocode version behavior (?1000h + ?1006h) but adds
-# ?1003h for better SSH/remote terminal scroll wheel support.
-ENABLE_MOUSE_TRACKING = "\u001b[?1000h\u001b[?1003h\u001b[?1006h"
-DISABLE_MOUSE_TRACKING = "\u001b[?1006l\u001b[?1003l\u001b[?1000l"
+# Report motion while a button is held for application-owned drag selection.
+ENABLE_MOUSE_TRACKING = "\u001b[?1000h\u001b[?1002h\u001b[?1006h"
+DISABLE_MOUSE_TRACKING = "\u001b[?1006l\u001b[?1003l\u001b[?1002l\u001b[?1000l"
 
-ENABLE_BRACKETED_PASTE  = "[?2004h"
-DISABLE_BRACKETED_PASTE = "[?2004l"
+ENABLE_BRACKETED_PASTE = "\u001b[?2004h"
+DISABLE_BRACKETED_PASTE = "\u001b[?2004l"
 ENABLE_FOCUS_TRACKING  = "[?1004h"
 ENABLE_SYNC_OUTPUT  = "[?2026h"
 DISABLE_SYNC_OUTPUT = "[?2026l"
@@ -74,16 +72,7 @@ def _enable_windows_vt_processing() -> None:
                 new_mode = mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT
                 kernel32.SetConsoleMode(handle, new_mode)
 
-        # Also enable VT input processing so the console sends ANSI
-        # escape sequences for special keys instead of Windows-native
-        # key events (useful for ConPTY / Windows Terminal).
-        STD_INPUT_HANDLE = -10
-        ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
-        h_in = kernel32.GetStdHandle(STD_INPUT_HANDLE)
-        mode_in = wintypes.DWORD()
-        if kernel32.GetConsoleMode(h_in, ctypes.byref(mode_in)):
-            kernel32.SetConsoleMode(h_in, mode_in.value | ENABLE_VIRTUAL_TERMINAL_INPUT)
-
+        # Input modes belong to _RawModeContext, which saves and restores them.
         _vt_enabled = True
     except Exception:
         # If ctypes is unavailable or the call fails (e.g. old Windows),

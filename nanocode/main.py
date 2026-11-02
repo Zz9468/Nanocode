@@ -248,6 +248,33 @@ def _handle_preview_rewind_request(
     print(preview)
     return 0
 
+def _shutdown_resources(memory_mgr, tools, *, interactive: bool) -> None:
+    from nanocode.logging_config import get_logger
+    from nanocode.memory_backend import shutdown_memory
+
+    logger = get_logger("main")
+    logger.info("Shutting down...")
+    if interactive and getattr(memory_mgr, "_service", None) is not None:
+        print("Closing memory worker (up to 2s); unfinished memory jobs remain queued.", flush=True)
+    try:
+        shutdown_memory(memory_mgr, timeout=2 if interactive else 60, drain=not interactive)
+    except KeyboardInterrupt:
+        logger.info("Memory shutdown wait interrupted; pending work remains in the durable queue")
+        if interactive:
+            print("Memory wait cancelled; unfinished jobs remain queued.", flush=True)
+    except Exception:
+        logger.warning("Memory shutdown failed; pending work remains in the durable queue", exc_info=False)
+    finally:
+        try:
+            tools.dispose()
+            logger.info("Tools disposed successfully")
+        except KeyboardInterrupt:
+            logger.info("Tool shutdown interrupted by user")
+        except Exception as error:
+            logger.warning("Error disposing tools: %s", error)
+    logger.info("Shutdown complete")
+
+
 def main() -> None:
     _configure_stdio_for_unicode()
 
@@ -467,7 +494,7 @@ def main() -> None:
 
     prompt_handler = _make_cli_permission_prompt() if sys.stdin.isatty() else None
     tools = create_default_tool_registry(cwd, runtime=runtime)
-    from nanocode.memory_backend import create_memory_manager, shutdown_memory
+    from nanocode.memory_backend import create_memory_manager
     memory_mgr = None
     try:
         permissions = PermissionManager(cwd, prompt=prompt_handler)
@@ -656,23 +683,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n\nInterrupted by user. Shutting down gracefully...")
     finally:
-        # Graceful shutdown: clean up all resources
-        from nanocode.logging_config import get_logger
-        logger = get_logger("main")
-        logger.info("Shutting down...")
-        try:
-            shutdown_memory(memory_mgr)
-        except Exception:
-            logger.warning("Memory shutdown failed; pending work remains in the durable queue", exc_info=False)
-        
-        # Dispose tools (closes MCP connections)
-        try:
-            tools.dispose()
-            logger.info("Tools disposed successfully")
-        except Exception as e:
-            logger.warning("Error disposing tools: %s", e)
-        
-        logger.info("Shutdown complete")
+        _shutdown_resources(memory_mgr, tools, interactive=sys.stdin.isatty())
 
 
 if __name__ == "__main__":

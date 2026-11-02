@@ -253,6 +253,53 @@ def test_agent_memory_works_without_work_chain_and_shutdown_finishes_jobs(tmp_pa
     assert len(turns) == 1
 
 
+def test_interactive_close_stops_waiting_and_preserves_real_mysql_queue(tmp_path):
+    overrides = {
+        "NANOCODE_MEMORY_DATA_DIR": str(tmp_path / "memory"),
+        "NANOCODE_MODEL_LEDGER_PATH": str(tmp_path / "costs.json"),
+        "OMNIHELM_RAG_PIPELINE_FAIL_OPEN": "false",
+    }
+    service = app(tmp_path, **overrides)
+    namespace = service.namespaces["project"]
+    key = "shutdown-future:" + uuid.uuid4().hex
+    service.repository.enqueue("embed", {"namespace": namespace}, key)
+    with service.repository.db.transaction() as tx:
+        tx.execute("UPDATE memory_jobs SET available_at=%s WHERE job_key=%s", (time.time() + 3600, key))
+    service.start_worker()
+    deadline = time.monotonic() + 5
+    while "worker" not in service.last_diagnostics and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert service.last_diagnostics["worker"]["queue"] == {"pending": 1}
+    started = time.monotonic()
+    try:
+        report = service.close(timeout=1, drain=False)
+        assert time.monotonic() - started < 1.5
+        assert report["worker_stopped"] is True
+        assert service._closed and service._worker_stop.is_set()
+        reloaded = app(tmp_path, **overrides)
+        assert reloaded.repository.job_counts(list(reloaded.namespaces.values())) == {"pending": 1}
+        with reloaded.repository.db.transaction() as tx:
+            rows = tx.query("SELECT status,attempts FROM memory_jobs WHERE job_key=%s", (key,))
+        assert rows == [{"status": "pending", "attempts": 0}]
+    finally:
+        service.close(0)
+
+
+def test_quick_shutdown_bridge_closes_without_starting_an_idle_worker(tmp_path):
+    manager = MemoryManager(tmp_path, backend="mysql", backend_env={
+        "NANOCODE_MYSQL_DATABASE": "nanocode_memory_test",
+        "NANOCODE_MEMORY_OWNER": "shutdown-" + uuid.uuid4().hex,
+        "NANOCODE_MEMORY_DATA_DIR": str(tmp_path / "memory"),
+        "NANOCODE_MODEL_LEDGER_PATH": str(tmp_path / "costs.json"),
+        "OMNIHELM_RAG_PIPELINE_FAIL_OPEN": "false",
+    })
+    assert manager._service._worker is None
+    report = shutdown_memory(manager, timeout=1, drain=False)
+    assert report["worker_stopped"] is True
+    assert manager._service._worker is None
+    assert manager._service._closed
+
+
 def test_empty_consolidation_checkpoint_is_honored_after_reload(tmp_path):
     manager = manager_for(tmp_path)
     service = manager._service

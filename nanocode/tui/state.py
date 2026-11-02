@@ -9,6 +9,7 @@ from nanocode.session import AutosaveManager, SessionData
 from nanocode.state import AppState, Store
 from nanocode.tooling import ToolRegistry
 from nanocode.tui.types import TranscriptEntry
+from nanocode.tui.selection import TranscriptSelection, TranscriptViewport
 from nanocode.types import ChatMessage, ModelAdapter
 
 
@@ -53,8 +54,11 @@ class ScreenState:
     input: str = ""
     cursor_offset: int = 0
     transcript: list[TranscriptEntry] = field(default_factory=list)
+    transcript_view_start: int = 0
     transcript_scroll_offset: int = 0
     transcript_revision: int = 0
+    transcript_selection: TranscriptSelection | None = None
+    transcript_viewport: TranscriptViewport | None = None
     selected_slash_index: int = 0
     status: str | None = None
     active_tool: str | None = None
@@ -73,3 +77,8 @@ class ScreenState:
     agent_result: dict | None = None
     agent_lock: Any = None
     tool_start_time: float | None = None
+
+    @property
+    def visible_transcript(self) -> list[TranscriptEntry]:
+        """Keep the display boundary separate from durable session entries."""
+        return self.transcript[self.transcript_view_start:] if self.transcript_view_start else self.transcript

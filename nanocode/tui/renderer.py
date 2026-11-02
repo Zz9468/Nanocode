@@ -17,7 +17,8 @@ from nanocode.tui.chrome import (
     RESET,
 )
 from nanocode.tui.input import render_input_prompt
-from nanocode.tui.transcript import format_runtime_summary_line, render_transcript
+from nanocode.tui.transcript import _compute_total_lines, format_runtime_summary_line, get_transcript_window_bounds, render_transcript
+from nanocode.tui.selection import build_transcript_viewport, clear_transcript_selection, render_selected_transcript
 from nanocode.tui.state import TtyAppArgs, ScreenState
 from nanocode.tui.navigation import _get_transcript_body_lines, _get_visible_commands
 from nanocode.tui.tool_helpers import _get_session_stats
@@ -35,7 +36,7 @@ _last_render_hash: int = 0
 _last_render_time: float = 0.0
 _transcript_snapshot_cache: dict[
     str,
-    tuple[tuple[int, int, int], list[TranscriptEntry]],
+    tuple[tuple[int, int, int, int], list[TranscriptEntry]],
 ] = {}
 
 
@@ -98,7 +99,7 @@ def _render_footer_cached(
 
 def _render_prompt_panel(state: ScreenState) -> str:
     commands = _get_visible_commands(state.input)
-    prompt_body = render_input_prompt(state.input, state.cursor_offset)
+    prompt_body = render_input_prompt(state.input, state.cursor_offset, selection_active=state.transcript_selection is not None)
     if commands:
         prompt_body += "\n" + render_slash_menu(
             commands,
@@ -128,8 +129,11 @@ def _compute_render_hash(args: TtyAppArgs, state: ScreenState) -> int:
         for tool in state.recent_tools[-3:]
     )
     term_size = _cached_terminal_size()
+    selection = state.transcript_selection
+    selection_key = (selection.anchor, selection.focus, selection.scroll_offset, selection.dragging) if selection else None
     return hash((
         transcript_rev,
+        state.transcript_view_start,
         scroll,
         input_hash,
         cursor,
@@ -138,16 +142,18 @@ def _compute_render_hash(args: TtyAppArgs, state: ScreenState) -> int:
         recent_tool_state,
         approval,
         term_size,
+        selection_key,
     ))
 
 
 def _get_transcript_snapshot(state: ScreenState) -> list[TranscriptEntry]:
-    cache_key = (id(state.transcript), state.transcript_revision, len(state.transcript))
+    start = state.transcript_view_start
+    cache_key = (id(state.transcript), state.transcript_revision, len(state.transcript), start)
     cached = _transcript_snapshot_cache.get("key")
     if cached and cached[0] == cache_key:
         return cached[1]
 
-    snapshot = list(state.transcript)
+    snapshot = list(state.transcript[start:]) if start else list(state.transcript)
     _transcript_snapshot_cache["key"] = (cache_key, snapshot)
     return snapshot
 
@@ -210,12 +216,15 @@ def _render_screen(args: TtyAppArgs, state: ScreenState) -> None:
     buf.append("\u001b[H\u001b[J")
 
     # Header
-    buf.append(_render_header_panel(args, state))
+    header_panel = _render_header_panel(args, state)
+    buf.append(header_panel)
     buf.append("\n\n")
 
     has_skills = len(args.tools.get_skills()) > 0
 
     if state.pending_approval:
+        clear_transcript_selection(state)
+        state.transcript_viewport = None
         # Permission approval overlay
         buf.append(
             render_permission_prompt(
@@ -248,19 +257,29 @@ def _render_screen(args: TtyAppArgs, state: ScreenState) -> None:
     # iteration + append can still race on length vs slot access).
     transcript_snapshot = _get_transcript_snapshot(state)
     body_lines = _get_transcript_body_lines(args, state)
-    if transcript_snapshot:
-        transcript_body = render_transcript(
-            transcript_snapshot,
-            state.transcript_scroll_offset,
-            body_lines,
-            state.transcript_revision,
-        )
+    width = max(40, _cached_terminal_size()[0])
+    selection = state.transcript_selection
+    if selection is not None and selection.width != width:
+        clear_transcript_selection(state)
+        selection = None
+    if transcript_snapshot or selection:
+        if selection is not None:
+            raw_body = render_selected_transcript(selection, body_lines)
+            total = len(selection.lines)
+            offset = selection.scroll_offset
+        else:
+            raw_body = render_transcript(transcript_snapshot, state.transcript_scroll_offset, body_lines, state.transcript_revision)
+            total = _compute_total_lines(transcript_snapshot, state.transcript_revision)
+            offset = state.transcript_scroll_offset
         transcript_body = _decorate_session_feed_body(
-            transcript_body,
+            raw_body,
             transcript_snapshot,
             state.session,
         )
+        start, end, _, _ = get_transcript_window_bounds(total, offset, body_lines)
+        state.transcript_viewport = build_transcript_viewport(raw_body, transcript_body, header_panel, start, end, body_lines, width)
     else:
+        state.transcript_viewport = None
         transcript_body = f"{render_status_line(None)}\n\nType /help for commands."
     buf.append(
         render_panel(

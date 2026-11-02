@@ -1,4 +1,5 @@
 from __future__ import annotations
+import sys
 
 from .chrome import (
     RESET, DIM, BOLD, ITALIC, HIGHLIGHT_BG,
@@ -7,7 +8,7 @@ from .chrome import (
 from .theme import theme
 
 
-def render_input_prompt(current_input: str, cursor_offset: int, compact: bool = False) -> str:
+def render_input_prompt(current_input: str, cursor_offset: int, compact: bool = False, selection_active: bool = False) -> str:
     """Render the input prompt line(s), supports multi-line via Ctrl+J.
 
     Format matches the Rust version:
@@ -55,9 +56,12 @@ def render_input_prompt(current_input: str, cursor_offset: int, compact: bool = 
     key_newline = f"{t.subtle}[{RESET}{DIM}^J{RESET}{t.subtle}]{RESET} {t.subtle}nl{RESET}"
     key_help = f"{t.subtle}[{RESET}{DIM}/help{RESET}{t.subtle}]{RESET} {t.subtle}cmds{RESET}"
     key_esc = f"{t.subtle}[{RESET}{DIM}Esc{RESET}{t.subtle}]{RESET} {t.subtle}clear{RESET}"
-    key_exit = f"{t.subtle}[{RESET}{DIM}^C{RESET}{t.subtle}]{RESET} {t.subtle}exit{RESET}"
+    key_exit = f"{t.subtle}[{RESET}{DIM}^C{RESET}{t.subtle}]{RESET} {t.subtle}{'copy' if selection_active else 'exit'}{RESET}"
 
     line1 = f"  {key_enter}  {key_newline}  {key_help}  {key_esc}  {key_exit}"
-    line2 = ""
+    line2 = (
+        f"  {t.subtle}Drag+wheel selects | Release copies | Ctrl+V paste{RESET}"
+        if sys.platform == "win32" else ""
+    )
 
     return "\n".join([line1, line2, input_line])

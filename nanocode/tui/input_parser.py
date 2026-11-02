@@ -1,6 +1,6 @@
 from __future__ import annotations
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Union, Literal
 
 # Pre-compiled regexes for escape sequence parsing
@@ -33,9 +33,22 @@ class TextEvent:
 @dataclass(frozen=True)
 class WheelEvent:
     direction: Literal['up', 'down']
+    x: int | None = field(default=None, compare=False)
+    y: int | None = field(default=None, compare=False)
     kind: str = "wheel"
 
-ParsedInputEvent = Union[KeyEvent, TextEvent, WheelEvent]
+
+@dataclass(frozen=True)
+class MouseEvent:
+    action: Literal['press', 'drag', 'release']
+    x: int
+    y: int
+    button: int = 0
+    shift: bool = False
+    kind: str = "mouse"
+
+
+ParsedInputEvent = Union[KeyEvent, TextEvent, WheelEvent, MouseEvent]
 
 @dataclass(frozen=True)
 class ParseResult:
@@ -119,21 +132,25 @@ def parse_escape_sequence(chunk: str) -> tuple[ParsedInputEvent | None, int]:
     sgr_match = _SGR_MOUSE_RE.match(chunk)
     if sgr_match:
         button = int(sgr_match.group(1))
+        x, y = int(sgr_match.group(2)), int(sgr_match.group(3))
         # wheel events (button & 0x43 == 0x40 → up, 0x41 → down)
         if (button & 0x43) == 0x40:
-            return WheelEvent(direction='up'), sgr_match.end()
+            return WheelEvent(direction='up', x=x, y=y), sgr_match.end()
         elif (button & 0x43) == 0x41:
-            return WheelEvent(direction='down'), sgr_match.end()
-        return None, sgr_match.end()
+            return WheelEvent(direction='down', x=x, y=y), sgr_match.end()
+        action = 'release' if sgr_match.group(4) == 'm' else ('drag' if button & 32 else 'press')
+        return MouseEvent(action=action, x=x, y=y, button=button & 3, shift=bool(button & 4)), sgr_match.end()
 
     # Legacy mouse: ESC[M...
     if chunk.startswith('\x1b[M') and len(chunk) >= 6:
-        button = ord(chunk[3])
+        button = ord(chunk[3]) - 32
+        x, y = ord(chunk[4]) - 32, ord(chunk[5]) - 32
         if (button & 0x43) == 0x40:
-            return WheelEvent(direction='up'), 6
+            return WheelEvent(direction='up', x=x, y=y), 6
         elif (button & 0x43) == 0x41:
-            return WheelEvent(direction='down'), 6
-        return None, 6
+            return WheelEvent(direction='down', x=x, y=y), 6
+        action = 'release' if button & 3 == 3 else ('drag' if button & 32 else 'press')
+        return MouseEvent(action=action, x=x, y=y, button=0 if action == 'release' else button & 3, shift=bool(button & 4)), 6
 
     # CSI cursor: ESC[{1;modifier}A/B/C/D/H/F
     csi_cursor_match = _CSI_CURSOR_RE.match(chunk)
@@ -202,7 +219,7 @@ def parse_input_chunk(chunk: str, incoming_chunk: str | None = None) -> ParseRes
             remainder), matching the TS reference. Defaults to ``chunk`` for
             single-arg callers.
     """
-    treat_newlines_as_text = _is_multiline_paste_chunk(
+    treat_newlines_as_text = '\x1b[200~' not in chunk and _is_multiline_paste_chunk(
         incoming_chunk if incoming_chunk is not None else chunk
     )
     events: list[ParsedInputEvent] = []
@@ -226,15 +243,15 @@ def parse_input_chunk(chunk: str, incoming_chunk: str | None = None) -> ParseRes
                 continue
 
             # Bracketed paste start: \x1b[200~
-            if chunk[i:i+6] == '\x1b[200~' and not maybe_need_more_for_escape_sequence(chunk[i+6:]):
-                i += 6
-                # Accumulate until paste end \x1b[201~
-                paste_end = chunk.find('\x1b[201~', i)
+            if chunk[i:i+6] == '\x1b[200~':
+                # Preserve the opening delimiter until the full paste arrives.
+                paste_end = chunk.find('\x1b[201~', i + 6)
                 if paste_end >= 0:
-                    paste_text = chunk[i:paste_end]
+                    paste_text = chunk[i + 6:paste_end]
+                    paste_text = paste_text.replace('\r\n', '\n').replace('\r', '\n')
                     # Strip control characters except newline and tab
                     paste_text = ''.join(c for c in paste_text if c.isprintable() or c in '\n\t')
-                    events.append(TextEvent(text=paste_text, ctrl=False))
+                    events.append(TextEvent(text=paste_text, ctrl=False, meta=False))
                     i = paste_end + 6  # Skip past \x1b[201~
                     continue
                 else:

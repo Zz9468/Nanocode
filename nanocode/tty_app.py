@@ -36,7 +36,8 @@ from nanocode.tui.event_flow import _handle_event as _handle_tty_event
 from nanocode.tui.runtime_control import _ThrottledRenderer, enter_tty_runtime, exit_tty_runtime, install_sigwinch_rerender
 from nanocode.tui.session_flow import handle_session_listing, load_or_create_session, build_tty_runtime_state, install_permission_prompt, finalize_tty_session
 from nanocode.tui.renderer import _render_screen
-from nanocode.tui.input_handler import _RawModeContext, _handle_input, _win_read_one_key
+from nanocode.tui.input_handler import _RawModeContext, _handle_input, _read_raw_chunk
+from nanocode.tui.selection import tick_transcript_selection
 
 # Terminal size — use unified cache from chrome module
 # ---------------------------------------------------------------------------
@@ -122,6 +123,8 @@ def run_tty_app(
 
         with _RawModeContext():
             while not should_exit:
+                if tick_transcript_selection(state):
+                    rerender()
                 # Autosave check (throttled)
                 _autosave_counter += 1
                 if state.autosave and _autosave_counter >= _AUTOSAVE_CHECK_INTERVAL:
@@ -139,20 +142,12 @@ def run_tty_app(
 
                 # Read raw input
                 if sys.platform == "win32":
-                    import msvcrt
-
-                    if not msvcrt.kbhit():
+                    chunk = _read_raw_chunk()
+                    if not chunk:
                         # Flush any deferred renders during idle
                         throttled.flush()
                         time.sleep(0.05)  # 从 0.02 增加到 0.05 降低 CPU 使用率
                         continue
-                    # Use _win_read_one_key to translate special keys
-                    chunk = ""
-                    while True:
-                        ch = _win_read_one_key()
-                        if not ch:
-                            break
-                        chunk += ch
                 else:
                     import select
 
@@ -189,12 +184,6 @@ def run_tty_app(
                 for event in parsed.events:
                     try:
                         _handle_tty_event(args, state, event, rerender, approval_event, approval_result, _handle_input)
-                        if state.input == "/exit" or (
-                            isinstance(event, KeyEvent)
-                            and event.name == "c"
-                            and event.ctrl
-                        ):
-                            raise SystemExit(0)
                     except SystemExit:
                         should_exit = True
                         break
@@ -252,10 +241,9 @@ def summarize_tool_output(tool_name: str, output: str) -> str:
 
 def _format_history(entries: list[str], limit: int = 20) -> str:
     """Format recent history entries with 1-based numbers."""
-    start = max(0, len(entries) - limit)
-    return "\n".join(
-        f"{start + i + 1}. {entry}" for i, entry in enumerate(entries[start:])
-    )
+    from nanocode.history import format_history_entries
+
+    return format_history_entries(entries, limit)
 
 
 def _save_transcript(state_obj: Any, cwd: str, permissions: PermissionManager, output_path: str) -> str:

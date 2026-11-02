@@ -33,6 +33,7 @@ from nanocode.session import (
     rewind_session,
     rewind_session_data,
 )
+from nanocode.history import format_history_entries, load_history_entries
 
 
 def format_slash_commands() -> str:
@@ -131,7 +132,7 @@ def find_matching_slash_commands(user_input: str) -> list[str]:
     # Fuzzy fallback: subsequence match (e.g., "mem" matches "/memory")
     lower = user_input.lower()
     fuzzy = [c for c in commands if all(ch in c.lower() for ch in lower)]
-    return fuzzy if fuzzy else commands
+    return fuzzy
 
 
 def complete_slash_command(line: str) -> tuple[list[str], str]:
@@ -477,6 +478,9 @@ def try_handle_local_command(
 
     if user_input in {"/", "/help"}:
         return format_slash_commands()
+
+    if user_input == "/history":
+        return format_history_entries(load_history_entries()) or "No prompt history yet."
 
     if user_input == "/config-paths":
         return "\n".join(

@@ -225,10 +225,14 @@ class MemoryService:
 
     def run_jobs(self, limit=10, kinds=None):
         for path, payload in self.files.replay():
+            if self._worker_stop.is_set():
+                break
             if payload.get("namespace") in self.namespaces.values():
                 self.repository.capture(payload["namespace"], payload); self.files.acknowledge(path)
         results, errors = [], []
         for _ in range(limit):
+            if self._worker_stop.is_set():
+                break
             job = self.repository.claim(kinds or ["extract", "embed", "curate"], list(self.namespaces.values()))
             if not job:
                 break
@@ -250,6 +254,8 @@ class MemoryService:
                 try:
                     report = self.run_jobs(100)
                     self.last_diagnostics["worker"] = report
+                    if self._worker_stop.is_set():
+                        break
                     due = self.repository.next_available_at(list(self.namespaces.values()))
                     retry_delay = 2
                 except MemoryUnavailable:
@@ -289,14 +295,28 @@ class MemoryService:
         except MemoryUnavailable:
             return {"unavailable": True, "outbox_pending": len(self.files.replay())}
 
-    def close(self, timeout=60):
-        try:
-            return self.drain(timeout)
-        finally:
-            with self._worker_lock:
-                self._closed = True
-                self._worker_stop.set()
-                self._worker_wakeup.set()
+    def _request_worker_stop(self):
+        with self._worker_lock:
+            self._closed = True
+            self._worker_stop.set()
+            self._worker_wakeup.set()
+            return self._worker
+
+    def close(self, timeout=60, *, drain=True):
+        """Drain on explicit flush; interactive exit only stops the worker.
+
+        Non-draining close never starts a worker or queries an unavailable DB.
+        Pending jobs and local outbox entries remain in their durable stores.
+        """
+        if drain:
+            try:
+                return self.drain(timeout)
+            finally:
+                self._request_worker_stop()
+        worker = self._request_worker_stop()
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(max(0, timeout))
+        return {"worker_stopped": worker is None or not worker.is_alive()}
 
     def export(self, destination):
         return self.files.export(destination, self.list_records(statuses=["active", "archived", "superseded", "deleted"]))

@@ -11,6 +11,14 @@ _history_cache: tuple[float, list[str]] | None = None
 _history_cache_ttl: float = 5.0  # seconds
 
 
+def format_history_entries(entries: list[str], limit: int = 20) -> str:
+    """Format recent input history with its original one-based numbering."""
+    start = max(0, len(entries) - limit)
+    return "\n".join(
+        f"{start + i + 1}. {entry}" for i, entry in enumerate(entries[start:])
+    )
+
+
 def load_history_entries() -> list[str]:
     global _history_cache
     now = time.time()

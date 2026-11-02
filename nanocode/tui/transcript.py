@@ -72,7 +72,9 @@ def _string_display_width(text: str) -> int:
 
 def _transcript_panel_width() -> int:
     cols, _ = _cached_terminal_size()
-    return max(60, cols)
+    # Keep one column for the scrollbar; otherwise a full row wraps again
+    # inside render_panel and mouse coordinates no longer match visual rows.
+    return max(60, cols) - 1
 
 
 def _wrap_panel_body_line(line: str, width: int) -> list[str]:
@@ -529,6 +531,35 @@ def get_transcript_max_scroll_offset(
     return max(0, total - ws)
 
 
+def get_transcript_window_bounds(
+    total_lines: int,
+    scroll_offset: int,
+    window_size: int | None = None,
+) -> tuple[int, int, int, int]:
+    ws = get_transcript_window_size(window_size)
+    max_offset = max(0, total_lines - ws)
+    offset = max(0, min(scroll_offset, max_offset))
+    end = total_lines - offset
+    start = max(0, end - (ws if offset == 0 else max(1, ws - 1)))
+    return start, end, offset, max_offset
+
+
+def format_transcript_window(visible_lines: list[str], offset: int, max_offset: int) -> str:
+    """Add the scrollbar and indicator to an already resolved visual window."""
+    t = theme()
+    body = "\n".join(visible_lines)
+    if offset == 0:
+        scrollbar = _render_scrollbar(offset, max_offset, len(visible_lines))
+        return _interleave_scrollbar(body, scrollbar)
+    scrollbar = _render_scrollbar(offset, max_offset, len(visible_lines))
+    indicator = (
+        f"{body}\n"
+        f"{t.subtle}  {ICON_DIVIDER * 2} scroll {offset}/{max_offset} "
+        f"(PgUp/PgDn or scroll){ICON_DIVIDER * 2}{t.reset}"
+    )
+    return _interleave_scrollbar(indicator, scrollbar)
+
+
 def render_transcript(
     entries: list[TranscriptEntry],
     scroll_offset: int,
@@ -536,37 +567,11 @@ def render_transcript(
     revision: int | None = None,
 ) -> str:
     """Render a windowed view of the transcript. O(visible)."""
-    t = theme()
     if not entries:
         return ""
-
     layout = _build_transcript_layout(entries, revision)
-    total_lines = layout.total_lines
-    ws = get_transcript_window_size(window_size)
-    max_offset = max(0, total_lines - ws)
-    offset = max(0, min(scroll_offset, max_offset))
-
-    if offset == 0:
-        end = total_lines
-        start = max(0, end - ws)
-        visible_lines = _render_visible_window(entries, start, end, revision)
-        body = "\n".join(visible_lines)
-        scrollbar = _render_scrollbar(offset, max_offset, len(visible_lines))
-        return _interleave_scrollbar(body, scrollbar)
-
-    content_ws = max(1, ws - 1)
-    end = total_lines - offset
-    start = max(0, end - content_ws)
-    visible_lines = _render_visible_window(entries, start, end, revision)
-    body = "\n".join(visible_lines)
-    scrollbar = _render_scrollbar(offset, max_offset, len(visible_lines))
-
-    indicator = (
-        f"{body}\n"
-        f"{t.subtle}  {ICON_DIVIDER * 2} scroll {offset}/{max_offset} "
-        f"(PgUp/PgDn or scroll){ICON_DIVIDER * 2}{t.reset}"
-    )
-    return _interleave_scrollbar(indicator, scrollbar)
+    start, end, offset, max_offset = get_transcript_window_bounds(layout.total_lines, scroll_offset, window_size)
+    return format_transcript_window(_render_visible_window(entries, start, end, revision), offset, max_offset)
 
 
 # 8-segment Unicode blocks for sub-character scrollbar precision
