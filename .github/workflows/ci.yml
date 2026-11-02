@@ -99,8 +99,21 @@ jobs:
         run: |
           python -m pip install mypy
           # Baseline: 225 errors. Gradual type hardening — fix real bugs, not just noise.
-          ERRORS=$(python -m mypy nanocode/ --no-error-summary 2>&1 | grep -c "error:" || echo 0)
+          REPORT="Main/NanocodeFrontline/Data/Test/TypeCheck/mypy-output.txt"
+          mkdir -p "$(dirname "$REPORT")"
+          MYPY_STATUS=0
+          python -m mypy nanocode/ --no-error-summary > "$REPORT" 2>&1 || MYPY_STATUS=$?
+          cat "$REPORT"
+          if [ "$MYPY_STATUS" -gt 1 ]; then
+            echo "FAIL: mypy could not complete (exit $MYPY_STATUS)"
+            exit "$MYPY_STATUS"
+          fi
+          ERRORS=$(awk '/error:/{count++} END {print count+0}' "$REPORT")
           echo "mypy errors: $ERRORS (baseline 225)"
+          if [ "$MYPY_STATUS" -eq 1 ] && [ "$ERRORS" -eq 0 ]; then
+            echo "FAIL: mypy exited with no countable diagnostics"
+            exit 1
+          fi
           if [ "$ERRORS" -gt 225 ]; then
             echo "FAIL: mypy errors increased above baseline"
             exit 1

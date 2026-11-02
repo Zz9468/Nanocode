@@ -2,6 +2,7 @@
 
 import signal
 import socket
+import threading
 import time
 
 import pytest
@@ -14,23 +15,43 @@ from nanocode.tooling import ToolRegistry
 
 @pytest.fixture
 def unavailable_manager(tmp_path):
-    # A bound, non-listening socket guarantees a real connection refusal;
-    # no fake database or substituted repository/worker implementation.
-    with socket.socket() as reserved:
-        reserved.bind(("127.0.0.1", 0))
-        manager = MemoryManager(tmp_path, backend="mysql", backend_env={
-            "NANOCODE_MYSQL_HOST": "127.0.0.1",
-            "NANOCODE_MYSQL_PORT": str(reserved.getsockname()[1]),
-            "NANOCODE_MYSQL_DATABASE": "nanocode_shutdown_test",
-            "NANOCODE_MEMORY_OWNER": "shutdown-" + tmp_path.name,
-            "NANOCODE_MEMORY_DATA_DIR": str(tmp_path / "memory"),
-            "NANOCODE_MODEL_LEDGER_PATH": str(tmp_path / "costs.json"),
-            "OMNIHELM_RAG_PIPELINE_FAIL_OPEN": "true",
-        })
+    # A bound, non-listening port can drop SYNs until the OS connect timeout.
+    # Instead close real TCP connections before any MySQL handshake data;
+    # the production driver/repository still handle the actual network error.
+    with socket.socket() as endpoint:
+        endpoint.bind(("127.0.0.1", 0))
+        endpoint.listen()
+        endpoint.settimeout(0.1)
+        stopped = threading.Event()
+
+        def disconnect_connections():
+            while not stopped.is_set():
+                try:
+                    connection, _ = endpoint.accept()
+                except socket.timeout:
+                    continue
+                connection.close()
+
+        listener = threading.Thread(target=disconnect_connections, daemon=True)
+        listener.start()
         try:
-            yield manager
+            manager = MemoryManager(tmp_path, backend="mysql", backend_env={
+                "NANOCODE_MYSQL_HOST": "127.0.0.1",
+                "NANOCODE_MYSQL_PORT": str(endpoint.getsockname()[1]),
+                "NANOCODE_MYSQL_DATABASE": "nanocode_shutdown_test",
+                "NANOCODE_MEMORY_OWNER": "shutdown-" + tmp_path.name,
+                "NANOCODE_MEMORY_DATA_DIR": str(tmp_path / "memory"),
+                "NANOCODE_MODEL_LEDGER_PATH": str(tmp_path / "costs.json"),
+                "OMNIHELM_RAG_PIPELINE_FAIL_OPEN": "true",
+            })
+            try:
+                yield manager
+            finally:
+                manager._service.close(1, drain=False)
         finally:
-            manager._service.close(0, drain=False)
+            stopped.set()
+            listener.join(1)
+            assert not listener.is_alive(), "TCP failure endpoint did not stop"
 
 
 def capture_pending(manager):
@@ -53,9 +74,12 @@ def test_interactive_shutdown_wakes_retrying_worker_and_preserves_outbox(unavail
     service = manager._service
     service.start_worker()
     deadline = time.monotonic() + 5
-    while "worker" not in service.last_diagnostics and time.monotonic() < deadline:
+    worker_report = service.last_diagnostics.get("worker")
+    while worker_report is None and time.monotonic() < deadline:
         time.sleep(0.01)
-    assert service.last_diagnostics["worker"]["degraded"] is True
+        worker_report = service.last_diagnostics.get("worker")
+    assert worker_report is not None, f"Worker did not report its state: {service.last_diagnostics}"
+    assert worker_report.get("degraded") is True, worker_report
     resource = (tmp_path / "tool-resource.txt").open("w", encoding="utf-8")
     tools = ToolRegistry([], disposer=resource.close)
     started = time.monotonic()
