@@ -15,7 +15,34 @@ from nanocode.tui.navigation import (
     _toggle_pending_approval_expand,
 )
 from nanocode.tui.state import ScreenState, TtyAppArgs
-from nanocode.tui.selection import handle_transcript_selection
+from nanocode.tui.selection import SelectionPoint, clear_transcript_selection, handle_transcript_selection
+from nanocode.tui.tool_helpers import _summarize_collapsed_tool_body
+from nanocode.tui.tool_lifecycle import _update_transcript_entry
+from nanocode.tui.transcript import _compute_total_lines, get_tool_toggle_at_point, get_transcript_window_bounds
+
+
+def _handle_transcript_click(state: ScreenState, point: SelectionPoint) -> bool:
+    selection, view = state.transcript_selection, state.transcript_viewport
+    if selection is None or view is None:
+        return False
+    entries = state.visible_transcript
+    entry = get_tool_toggle_at_point(
+        entries, point.row, point.column, selection.lines[point.row], state.transcript_revision,
+    )
+    if entry is None:
+        return False
+    collapsed = entry.collapsed or entry.collapsePhase == 3
+    clear_transcript_selection(state)
+    _update_transcript_entry(
+        state, entry.id, collapsed=not collapsed, collapsePhase=None,
+        collapsedSummary=entry.collapsedSummary or _summarize_collapsed_tool_body(entry.body),
+    )
+    total = _compute_total_lines(entries, state.transcript_revision)
+    # Preserve the top document row so expanding does not jump to the result's tail.
+    _, _, state.transcript_scroll_offset, _ = get_transcript_window_bounds(
+        total, total - view.source_start - max(1, view.window_size - 1), view.window_size,
+    )
+    return True
 
 
 def _handle_event(
@@ -27,7 +54,9 @@ def _handle_event(
     approval_result: dict[str, Any],
     handle_input_fn: Callable[[TtyAppArgs, ScreenState, Callable[[], None], str | None], bool],
 ) -> None:
-    if state.pending_approval is None and handle_transcript_selection(state, event):
+    if state.pending_approval is None and handle_transcript_selection(
+        state, event, on_click=lambda point: _handle_transcript_click(state, point),
+    ):
         rerender()
         return
     if (

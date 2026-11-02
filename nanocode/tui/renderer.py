@@ -13,6 +13,8 @@ from nanocode.tui.chrome import (
     render_slash_menu,
     render_status_line,
     render_tool_panel,
+    wrap_panel_body_line,
+    HIGHLIGHT_BG,
     SUBTLE,
     RESET,
 )
@@ -20,7 +22,7 @@ from nanocode.tui.input import render_input_prompt
 from nanocode.tui.transcript import _compute_total_lines, format_runtime_summary_line, get_transcript_window_bounds, render_transcript
 from nanocode.tui.selection import build_transcript_viewport, clear_transcript_selection, render_selected_transcript
 from nanocode.tui.state import TtyAppArgs, ScreenState
-from nanocode.tui.navigation import _get_transcript_body_lines, _get_visible_commands
+from nanocode.tui.navigation import _get_visible_commands
 from nanocode.tui.tool_helpers import _get_session_stats
 from nanocode.tui.types import TranscriptEntry
 from nanocode.tui.ui_hints import _get_contextual_help
@@ -40,7 +42,7 @@ _transcript_snapshot_cache: dict[
 ] = {}
 
 
-def _render_header_panel(args: TtyAppArgs, state: ScreenState) -> str:
+def _render_header_panel(args: TtyAppArgs, state: ScreenState, compact: bool = False) -> str:
     """Render the top banner panel with model info, cwd, and session stats.
     
     The result is cached to avoid re-rendering when stats haven't changed.
@@ -54,6 +56,7 @@ def _render_header_panel(args: TtyAppArgs, state: ScreenState) -> str:
         stats.get("skillCount"),
         stats.get("mcpCount"),
         _cached_terminal_size(),
+        compact,
     )
     cached = _banner_cache.get("key")
     if cached and cached[0] == cache_key:
@@ -63,6 +66,7 @@ def _render_header_panel(args: TtyAppArgs, state: ScreenState) -> str:
         args.cwd,
         args.permissions.get_summary(),
         stats,
+        compact=compact,
     )
     _banner_cache["key"] = (cache_key, result)
     return result
@@ -97,15 +101,25 @@ def _render_footer_cached(
     return result
 
 
-def _render_prompt_panel(state: ScreenState) -> str:
+def _render_prompt_panel(state: ScreenState, compact: bool = False) -> str:
     commands = _get_visible_commands(state.input)
-    prompt_body = render_input_prompt(state.input, state.cursor_offset, selection_active=state.transcript_selection is not None)
+    prompt_body = render_input_prompt(state.input, state.cursor_offset, compact=compact, selection_active=state.transcript_selection is not None)
     if commands:
         prompt_body += "\n" + render_slash_menu(
             commands,
             min(state.selected_slash_index, len(commands) - 1),
         )
     return render_panel("prompt", prompt_body)
+
+
+def _limit_prompt_height(panel: str, max_height: int) -> str:
+    """Keep the cursor's input rows visible without changing the pasted draft."""
+    lines = panel.splitlines()
+    body = lines[3:-1]
+    available = max(1, max_height - 4)
+    cursor = next((index for index, line in enumerate(body) if HIGHLIGHT_BG in line), len(body) - 1)
+    start = max(0, min(cursor - available + 1, len(body) - available))
+    return "\n".join([*lines[:3], *body[start:start + available], lines[-1]])
 
 
 def _compute_render_hash(args: TtyAppArgs, state: ScreenState) -> int:
@@ -217,12 +231,11 @@ def _render_screen(args: TtyAppArgs, state: ScreenState) -> None:
 
     # Header
     header_panel = _render_header_panel(args, state)
-    buf.append(header_panel)
-    buf.append("\n\n")
 
     has_skills = len(args.tools.get_skills()) > 0
 
     if state.pending_approval:
+        buf.extend([header_panel, "\n\n"])
         clear_transcript_selection(state)
         state.transcript_viewport = None
         # Permission approval overlay
@@ -256,12 +269,44 @@ def _render_screen(args: TtyAppArgs, state: ScreenState) -> None:
     # agent-thread appends (CPython GIL makes list.append atomic but
     # iteration + append can still race on length vs slot access).
     transcript_snapshot = _get_transcript_snapshot(state)
-    body_lines = _get_transcript_body_lines(args, state)
-    width = max(40, _cached_terminal_size()[0])
+    columns, terminal_rows = _cached_terminal_size()
+    width = max(40, columns)
     selection = state.transcript_selection
     if selection is not None and selection.width != width:
         clear_transcript_selection(state)
         selection = None
+    prompt_panel = _render_prompt_panel(state)
+    footer = _render_footer_cached(state.status, True, has_skills, background_tasks)
+    footer = "\n".join(wrap_panel_body_line(footer, width + 4))
+    if contextual_help:
+        footer += "\n" + "\n".join(wrap_panel_body_line(f"{SUBTLE}{contextual_help}{RESET}", width + 4))
+    # Measure the actual frame, including wrapped header/prompt/footer rows.
+    # A fixed estimate lets metadata push the frame past the terminal bottom,
+    # scrolling the picture while leaving every mouse hit row unchanged.
+    empty_feed = render_panel("session feed", "", right_title=f"{len(transcript_snapshot)} events")
+    def fixed_frame_height() -> int:
+        return len(f"{header_panel}\n\n{empty_feed}\n\n{prompt_panel}\n\n{footer}".splitlines())
+
+    fixed_height = fixed_frame_height()
+    if fixed_height + 4 > terminal_rows:
+        header_panel = _render_header_panel(args, state, compact=True)
+        prompt_panel = _render_prompt_panel(state, compact=True)
+        fixed_height = fixed_frame_height()
+    if fixed_height + 4 > terminal_rows:
+        max_prompt_height = len(prompt_panel.splitlines()) + terminal_rows - fixed_height - 4
+        prompt_panel = _limit_prompt_height(prompt_panel, max_prompt_height)
+        fixed_height = fixed_frame_height()
+    suffix = f"\n\n{prompt_panel}\n\n{footer}"
+    buf.extend([header_panel, "\n\n"])
+    prefix = _decorate_session_feed_body("", transcript_snapshot, state.session) if transcript_snapshot or selection else ""
+    prefix_rows = [part for line in prefix.splitlines() for part in wrap_panel_body_line(line, width)]
+    prefix_limit = max(0, terminal_rows - fixed_height - 4)
+    if len(prefix_rows) > prefix_limit:
+        prefix_rows = prefix_rows[:prefix_limit]
+        if prefix_rows:
+            prefix_rows[-1] = f"{SUBTLE}...{RESET}"
+    prefix = "\n".join(prefix_rows) + "\n" if prefix_rows else ""
+    body_lines = max(4, terminal_rows - fixed_height - len(prefix_rows))
     if transcript_snapshot or selection:
         if selection is not None:
             raw_body = render_selected_transcript(selection, body_lines)
@@ -271,12 +316,12 @@ def _render_screen(args: TtyAppArgs, state: ScreenState) -> None:
             raw_body = render_transcript(transcript_snapshot, state.transcript_scroll_offset, body_lines, state.transcript_revision)
             total = _compute_total_lines(transcript_snapshot, state.transcript_revision)
             offset = state.transcript_scroll_offset
-        transcript_body = _decorate_session_feed_body(
-            raw_body,
-            transcript_snapshot,
-            state.session,
-        )
-        start, end, _, _ = get_transcript_window_bounds(total, offset, body_lines)
+        transcript_body = prefix + raw_body
+        start, end, offset, _ = get_transcript_window_bounds(total, offset, body_lines)
+        if selection is not None:
+            selection.scroll_offset = offset
+        else:
+            state.transcript_scroll_offset = offset
         state.transcript_viewport = build_transcript_viewport(raw_body, transcript_body, header_panel, start, end, body_lines, width)
     else:
         state.transcript_viewport = None
@@ -289,18 +334,7 @@ def _render_screen(args: TtyAppArgs, state: ScreenState) -> None:
             min_body_lines=body_lines,
         )
     )
-    buf.append("\n\n")
-
-    # Prompt
-    buf.append(_render_prompt_panel(state))
-    buf.append("\n\n")
-
-    # Footer (cached)
-    buf.append(_render_footer_cached(state.status, True, has_skills, background_tasks))
-    
-    # 上下文帮助行
-    if contextual_help:
-        buf.append(f"\n{SUBTLE}{contextual_help}{RESET}")
+    buf.append(suffix)
     
     output = "".join(buf)
     sys.stdout.write(output)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from nanocode.tui.clipboard import copy_text
 from nanocode.tui.chrome import string_display_width, wrap_panel_body_line
@@ -180,7 +180,11 @@ def tick_transcript_selection(state: ScreenState, now: float | None = None) -> b
     return _scroll_selection(state, direction * 2)
 
 
-def handle_transcript_selection(state: ScreenState, event) -> bool:
+def handle_transcript_selection(
+    state: ScreenState,
+    event,
+    on_click: Callable[[SelectionPoint], bool] | None = None,
+) -> bool:
     """Consume selection gestures before prompt editing or Ctrl+C exit."""
     selection, view = state.transcript_selection, state.transcript_viewport
     if isinstance(event, MouseEvent):
@@ -202,8 +206,12 @@ def handle_transcript_selection(state: ScreenState, event) -> bool:
             return True
         if selection is not None and selection.dragging and event.button == 0:
             selection.pointer_x, selection.pointer_y = event.x, event.y
-            selection.moved = True
             _update_focus(selection, view)
+            if (event.action == "release" and not selection.moved
+                    and _pointer_point(selection, view, event.x, event.y, False) == selection.anchor
+                    and on_click is not None and on_click(selection.anchor)):
+                return True
+            selection.moved = True
             if event.action == "release":
                 selection.dragging = False
                 if not copy_transcript_selection(state):

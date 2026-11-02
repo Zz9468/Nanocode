@@ -17,6 +17,9 @@ _TRANSCRIPT_FRAME_LINES = 4
 
 
 def _get_transcript_body_lines(args: TtyAppArgs, state: ScreenState) -> int:
+    view = state.transcript_viewport
+    if view is not None and view.width == max(40, _cached_terminal_size()[0]):
+        return view.window_size
     _, rows = _cached_terminal_size()
     rows = max(24, rows)
     chrome_overhead = (

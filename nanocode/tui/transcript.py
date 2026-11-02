@@ -264,7 +264,10 @@ def _render_transcript_entry(entry: TranscriptEntry) -> str:
         )
         is_collapsed = entry.collapsed or entry.collapsePhase == 3
         is_collapsing = entry.collapsePhase in (1, 2)
-        can_toggle = collapsible_by_lines or collapsible_by_chars or is_collapsing
+        can_toggle = entry.status != "running" and bool(entry.body) and (
+            collapsible_by_lines or collapsible_by_chars or is_collapsing
+            or is_collapsed or entry.collapsedSummary is not None
+        )
 
         if can_toggle:
             if is_collapsing:
@@ -286,38 +289,26 @@ def _render_transcript_entry(entry: TranscriptEntry) -> str:
         if entry.status == "running":
             body = entry.body
         elif is_collapsing:
-            body = _render_tool_body(entry, body_lines, total_lines, collapsible_by_lines, is_collapsed)
+            body = _render_tool_body(entry)
         elif is_collapsed:
             summary = entry.collapsedSummary or "output collapsed"
             body = f"{t.subtle}{t.italic}{summary}{t.reset}"
         else:
-            body = _render_tool_body(entry, body_lines, total_lines, collapsible_by_lines, is_collapsed)
+            body = _render_tool_body(entry)
 
         return f"{label}\n{_indent_block(body)}"
 
     return ""
 
 
-def _render_tool_body(entry, body_lines, total_lines, collapsible, is_collapsed):
-    """Render tool body with diff coloring for edit/patch/diff tools."""
-    t = theme()
+def _render_tool_body(entry: TranscriptEntry) -> str:
+    """Render the complete expanded result; the transcript viewport scrolls it."""
     body = entry.body
 
     if entry.toolName in _DIFF_TOOLS and _looks_like_diff_block(body):
-        colored = colorize_unified_diff_block(body)
-        if collapsible and not is_collapsed:
-            preview = "\n".join(colored.split("\n")[:_TOOL_PREVIEW_LINES])
-            hidden = max(0, total_lines - _TOOL_PREVIEW_LINES)
-            return preview + (f"\n{t.subtle}  ... {hidden} more lines{t.reset}" if hidden > 0 else "")
-        return colored
+        return colorize_unified_diff_block(body)
 
-    if collapsible and not is_collapsed:
-        preview = "\n".join(body_lines[:_TOOL_PREVIEW_LINES])
-        hidden = max(0, total_lines - _TOOL_PREVIEW_LINES)
-        return preview_tool_body(entry.toolName or "", render_markdownish(preview)) + (
-            f"\n{t.subtle}  ... {hidden} more lines{t.reset}" if hidden > 0 else ""
-        )
-    return preview_tool_body(entry.toolName or "", render_markdownish(body))
+    return render_markdownish(body)
 
 
 def get_transcript_window_size(window_size: int | None = None) -> int:
@@ -476,6 +467,33 @@ def _compute_total_lines(entries: list[TranscriptEntry], revision: int | None = 
     return _build_transcript_layout(entries, revision).total_lines
 
 
+def get_tool_toggle_at_point(
+    entries: list[TranscriptEntry],
+    row: int,
+    column: int,
+    line_text: str,
+    revision: int | None = None,
+) -> TranscriptEntry | None:
+    """Resolve a selection document position against the rendered tool header."""
+    layout = _build_transcript_layout(entries, revision)
+    index = bisect_left(layout.entry_line_starts, row + 1) - 1
+    if index < 0:
+        return None
+    entry = entries[index]
+    if entry.kind != "tool" or entry.status == "running" or entry.collapsePhase in (1, 2):
+        return None
+    header = _strip_ansi(_render_transcript_entry(entry).split("\n", 1)[0])
+    toggle = "[展开]" if entry.collapsed or entry.collapsePhase == 3 else "[收起]"
+    if not header.endswith(toggle):
+        return None
+    header_rows = _wrap_panel_body_line(header, _transcript_panel_width())
+    relative_row = row - layout.entry_line_starts[index]
+    if not 0 <= relative_row < len(header_rows) or header_rows[relative_row] != line_text:
+        return None
+    position = sum(len(part) for part in header_rows[:relative_row]) + column
+    return entry if len(header) - len(toggle) <= position < len(header) else None
+
+
 def _render_visible_window(
     entries: list[TranscriptEntry],
     start_line: int,
@@ -527,8 +545,7 @@ def get_transcript_max_scroll_offset(
     if not entries:
         return 0
     total = _compute_total_lines(entries, revision)
-    ws = get_transcript_window_size(window_size)
-    return max(0, total - ws)
+    return get_transcript_window_bounds(total, 0, window_size)[3]
 
 
 def get_transcript_window_bounds(
@@ -538,6 +555,8 @@ def get_transcript_window_bounds(
 ) -> tuple[int, int, int, int]:
     ws = get_transcript_window_size(window_size)
     max_offset = max(0, total_lines - ws)
+    if max_offset:
+        max_offset += 1  # Scrolling reserves one visible row for its indicator.
     offset = max(0, min(scroll_offset, max_offset))
     end = total_lines - offset
     start = max(0, end - (ws if offset == 0 else max(1, ws - 1)))

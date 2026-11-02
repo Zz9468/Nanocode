@@ -70,6 +70,21 @@ def test_render_transcript_shows_collapsed_summary_when_fully_collapsed() -> Non
     assert "full output here" not in rendered
 
 
+@pytest.mark.parametrize("tool_name,body", [
+    ("read_file", "FILE: demo.txt\n" + "a" * 1400 + "END_OF_LONG_LINE"),
+    ("run_command", "\n".join(f"command output {i}" for i in range(80))),
+    ("edit_file", "@@ -1,1 +1,80 @@\n-old\n" + "\n".join(f"+added {i}" for i in range(80))),
+])
+def test_expanded_tool_renders_the_complete_returned_body(tool_name, body):
+    from nanocode.tui.transcript import _render_transcript_entry, _strip_ansi
+
+    entry = TranscriptEntry(id=1, kind="tool", toolName=tool_name, status="success", body=body)
+    rendered = _strip_ansi(_render_transcript_entry(entry))
+    assert body.splitlines()[-1] in rendered
+    assert "output truncated in transcript" not in rendered
+    assert "more lines" not in rendered
+
+
 def test_render_permission_prompt_lists_choices() -> None:
     rendered = render_permission_prompt(
         {

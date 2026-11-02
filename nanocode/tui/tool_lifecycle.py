@@ -156,7 +156,10 @@ def _schedule_tool_auto_collapse(
 
     def _do_collapse() -> None:
         time.sleep(0.25)
-        _collapse_tool_entry(state, entry_id, summary)
+        entry = _find_transcript_entry(state, entry_id, prefer_tail=True)
+        # A user toggle sets the summary; a delayed default must not override it.
+        if entry is not None and entry.body == output and entry.collapsedSummary is None:
+            _collapse_tool_entry(state, entry_id, summary)
         rerender()
 
     t = threading.Thread(target=_do_collapse, daemon=True)
