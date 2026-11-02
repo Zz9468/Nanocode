@@ -277,8 +277,11 @@ def test_transcript_wrapping_counts_visual_rows(monkeypatch: pytest.MonkeyPatch)
     """A long body wraps across multiple visual rows, which the max scroll offset
     must account for. Mirrors TS: withTerminalWidth(60, getTranscriptMaxScrollOffset).
 
-    Width 60 → inner = 56; a 172-char body wraps to 4 rows + 1 label row = 5,
-    so a 4-row window yields scroll offset 1."""
+    Width 60 reserves one scrollbar column, leaving 55 content columns.
+    The 172-char body wraps to 4 rows + 1 label row = 5. A scrolled 4-row
+    window reserves one row for its indicator, so reaching the label needs
+    offset 2. The unscrolled window must still show the complete body tail.
+    """
     from nanocode.tui import transcript as transcript_module
 
     monkeypatch.setattr(transcript_module, "_cached_terminal_size", lambda: (60, 24))
@@ -288,4 +291,18 @@ def test_transcript_wrapping_counts_visual_rows(monkeypatch: pytest.MonkeyPatch)
     ]
     offset = transcript_module.get_transcript_max_scroll_offset(entries, window_size=4)
 
-    assert offset == 1
+    assert offset == 2
+
+    top = transcript_module._strip_ansi(
+        transcript_module.render_transcript(entries, scroll_offset=offset, window_size=4)
+    ).splitlines()
+    assert len(top) == 4
+    assert top[0].startswith("▶ assistant")
+    assert "scroll 2/2" in top[-1]
+
+    bottom = transcript_module._strip_ansi(
+        transcript_module.render_transcript(entries, scroll_offset=0, window_size=4)
+    ).splitlines()
+    assert len(bottom) == 4
+    assert "BCDEFG" in bottom[-1]
+    assert all("scroll" not in line for line in bottom)
