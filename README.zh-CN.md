@@ -186,7 +186,15 @@ NANOCODE_MYSQL_USER=YOUR_DATABASE_USER
 NANOCODE_MYSQL_PASSWORD=YOUR_DATABASE_PASSWORD
 ```
 
-数据库需要提前创建，账号需要具备创建和更新记忆表的权限，连接使用 TLS。仓库的 Docker Compose 配置不负责启动 MySQL 服务。
+数据库账号需要具备创建和更新记忆表的权限，连接使用 TLS。可以连接已有数据库，也可以使用专用的 [MySql.compose.yaml](./Package/AgentMemory/Config/MySql.compose.yaml) 部署本地 MySQL 8.4。
+
+使用专用 Compose 前，在 `Package/AgentMemory/Data/Local/MySql/` 准备 `root_password` 和 `application_password` 两个密码文件；后者必须与 `runtime.env` 中的 `NANOCODE_MYSQL_PASSWORD` 一致。密码文件位于 Git 忽略的本机数据目录。然后在仓库根目录执行：
+
+```bash
+docker compose --env-file Package/AgentMemory/Data/Local/runtime.env -f Package/AgentMemory/Config/MySql.compose.yaml up -d --wait
+```
+
+首次启动会创建配置的数据库与应用账号，数据保存在 `nanocode-mysql-data` 持久卷中，端口仅绑定本机。容器采用 `unless-stopped` 重启策略：Docker 启动后会自动恢复容器；手动停止容器后需执行 `docker start nanocode-mysql`。NanoCode 本身不会启动 Docker 或 MySQL。可在 Docker Desktop 设置中开启登录时自动启动。
 
 语义索引和记忆处理还需要单独配置模型服务：
 

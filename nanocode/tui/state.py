@@ -73,6 +73,7 @@ class ScreenState:
     autosave: AutosaveManager | None = None
     app_state: Store[AppState] | None = None
     cost_tracker: CostTracker | None = None
+    tool_thread: Any = None
     agent_thread: Any = None
     agent_result: dict | None = None
     agent_lock: Any = None

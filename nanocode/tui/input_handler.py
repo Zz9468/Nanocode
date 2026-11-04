@@ -252,6 +252,7 @@ def _execute_tool_shortcut(
     state.is_busy = True
     state.status = f"Running {tool_name}..."
     state.active_tool = tool_name
+    args.permissions.begin_turn()
     entry_id = _push_transcript_entry(
         state,
         kind="tool",
@@ -261,30 +262,38 @@ def _execute_tool_shortcut(
     )
     rerender()
 
-    try:
-        result = args.tools.execute(
-            tool_name,
-            tool_input,
-            context=ToolContext(
-                cwd=args.cwd,
-                permissions=args.permissions,
-                session=state.session,
-            ),
-        )
-        state.recent_tools.append({
-            "name": tool_name,
-            "status": "success" if result.ok else "error",
-        })
-        output = result.output if result.ok else f"ERROR: {result.output}"
-        _update_tool_entry(state, entry_id, "success" if result.ok else "error", output)
-        _collapse_tool_entry(state, entry_id, _summarize_collapsed_tool_body(output))
-        state.transcript_scroll_offset = 0
-    finally:
-        state.is_busy = False
-        state.active_tool = None
-        _finalize_dangling_running_tools(state)
-        if not _get_running_tool_entries(state):
-            state.status = None
+    def _run_shortcut_background() -> None:
+        try:
+            result = args.tools.execute(
+                tool_name,
+                tool_input,
+                context=ToolContext(
+                    cwd=args.cwd,
+                    permissions=args.permissions,
+                    session=state.session,
+                ),
+            )
+            state.recent_tools.append({
+                "name": tool_name,
+                "status": "success" if result.ok else "error",
+            })
+            output = result.output if result.ok else f"ERROR: {result.output}"
+            _update_tool_entry(state, entry_id, "success" if result.ok else "error", output)
+            _collapse_tool_entry(state, entry_id, _summarize_collapsed_tool_body(output))
+            state.transcript_scroll_offset = 0
+        finally:
+            args.permissions.end_turn()
+            state.active_tool = None
+            _finalize_dangling_running_tools(state)
+            if not _get_running_tool_entries(state):
+                state.status = None
+            state.is_busy = False
+            rerender()
+
+    # Permission prompts wait for key events from the UI thread. Running a
+    # shortcut there would prevent both rendering and answering its prompt.
+    state.tool_thread = threading.Thread(target=_run_shortcut_background, daemon=True)
+    state.tool_thread.start()
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from nanocode.tui.input_parser import KeyEvent, MouseEvent, TextEvent, WheelEven
 from nanocode.tui.navigation import _get_max_transcript_scroll_offset
 from nanocode.tui.renderer import _get_transcript_snapshot, _render_screen
 from nanocode.tui.selection import SelectionPoint, TranscriptSelection
-from nanocode.tui.session_flow import refresh_tty_session_snapshot
+from nanocode.tui.session_flow import install_permission_prompt, refresh_tty_session_snapshot
 from nanocode.tui.state import ScreenState, TtyAppArgs
 from nanocode.tui.types import TranscriptEntry
 
@@ -75,6 +75,187 @@ def test_clear_command_is_handled_instead_of_suggesting_itself(local_runtime):
     assert "Unknown command" not in body
     assert "PREVIOUS_OUTPUT" not in body
     assert "cleared" in body.lower()
+
+
+@pytest.mark.parametrize("operation", ["edit", "command", "external_read"])
+@pytest.mark.parametrize("allow", [True, False], ids=["allow", "deny"])
+def test_tool_shortcut_keeps_input_responsive_during_real_approval(
+    local_runtime, tmp_path, capsys, operation, allow,
+):
+    import sys
+    from pathlib import Path
+
+    from nanocode.tools.edit_file import edit_file_tool
+    from nanocode.tools.read_file import read_file_tool
+    from nanocode.tools.run_command import run_command_tool
+
+    args, state = local_runtime
+    target = Path(args.cwd, "lesson.txt")
+    target.write_text("status=pending\n", encoding="utf-8")
+    marker = Path(args.cwd, "command-ran.txt")
+    probe = Path(args.cwd, "probe.py")
+    probe.write_text(
+        "from pathlib import Path\n"
+        "Path(__file__).with_name('command-ran.txt').write_text('approved', encoding='utf-8')\n"
+        "print('APPROVED_COMMAND')\n",
+        encoding="utf-8",
+    )
+    external = tmp_path.parent / (tmp_path.name + "-outside.txt")
+    external.write_text("EXTERNAL_SAMPLE", encoding="utf-8")
+    args.tools = ToolRegistry([edit_file_tool, read_file_tool, run_command_tool])
+    command = {
+        "edit": "/edit lesson.txt::status=pending::status=approved",
+        "command": f"/cmd {sys.executable} -B probe.py",
+        "external_read": f"/read {external}",
+    }[operation]
+    dispatched, pending, completed = (threading.Event() for _ in range(3))
+
+    def rerender():
+        if state.pending_approval is not None:
+            pending.set()
+        if not state.is_busy and any(e.kind == "tool" for e in state.transcript):
+            completed.set()
+
+    approval_event, approval_result, _ = install_permission_prompt(args, state, rerender)
+
+    def send_event(event):
+        _handle_event(args, state, event, rerender, approval_event, approval_result, _handle_input)
+
+    def dispatch():
+        send_event(TextEvent(command, ctrl=False, meta=False))
+        send_event(KeyEvent("return", ctrl=False, meta=False))
+        dispatched.set()
+
+    input_thread = threading.Thread(target=dispatch, daemon=True)
+    input_thread.start()
+    try:
+        assert dispatched.wait(2), "Shortcut blocked the UI input loop while waiting for approval"
+        assert pending.wait(2), "Real permission request was not published"
+        assert state.is_busy
+        assert target.read_text(encoding="utf-8") == "status=pending\n"
+        assert not marker.exists(), "Command ran before approval"
+        assert not any("EXTERNAL_SAMPLE" in e.body for e in state.transcript)
+        _render_screen(args, state)
+        frame = strip_ansi(capsys.readouterr().out)
+        assert "allow" in frame.lower() or "apply" in frame.lower()
+        key = ("1" if allow else "5") if operation == "edit" else ("y" if allow else "n")
+        send_event(TextEvent(key, ctrl=False, meta=False))
+        assert completed.wait(5), "Tool did not finish after the permission key"
+        result = next(e for e in reversed(state.transcript) if e.kind == "tool")
+        assert result.status == ("success" if allow else "error")
+        assert state.pending_approval is None and not state.is_busy
+        if operation == "edit":
+            assert target.read_text(encoding="utf-8") == f"status={'approved' if allow else 'pending'}\n"
+            assert len(state.session.checkpoints) == 1 + int(allow)
+        elif operation == "command":
+            assert marker.exists() == allow
+            if allow:
+                assert marker.read_text(encoding="utf-8") == "approved"
+                assert "APPROVED_COMMAND" in result.body
+        else:
+            assert ("EXTERNAL_SAMPLE" in result.body) == allow
+        assert args.messages == [{"role": "user", "content": "Remember the README task"}]
+        assert not args.permissions.turn_allowed_edits and not args.permissions.turn_allow_all_edits
+    finally:
+        # Release a broken implementation only after the assertion failed;
+        # cleanup cannot turn a stalled input loop into a passing result.
+        if state.pending_approval is not None:
+            send_event(KeyEvent("escape", ctrl=False, meta=False))
+        input_thread.join(timeout=3)
+        worker = getattr(state, "tool_thread", None)
+        if worker is not None:
+            worker.join(timeout=3)
+
+
+def test_permission_key_received_during_render_is_not_lost(local_runtime):
+    from pathlib import Path
+
+    from nanocode.tools.edit_file import edit_file_tool
+
+    args, state = local_runtime
+    target = Path(args.cwd, "lesson.txt")
+    target.write_text("status=pending\n", encoding="utf-8")
+    args.tools = ToolRegistry([edit_file_tool])
+    completed = threading.Event()
+    answered = threading.Event()
+
+    def rerender():
+        if state.pending_approval is not None and not answered.is_set():
+            answered.set()
+            _handle_event(
+                args, state, TextEvent("1", ctrl=False, meta=False), lambda: None,
+                approval_event, approval_result, _handle_input,
+            )
+        if not state.is_busy and any(e.kind == "tool" for e in state.transcript):
+            completed.set()
+
+    approval_event, approval_result, _ = install_permission_prompt(args, state, rerender)
+
+    def dispatch():
+        _handle_input(
+            args, state, rerender,
+            submitted_raw_input="/edit lesson.txt::status=pending::status=approved",
+        )
+
+    input_thread = threading.Thread(target=dispatch, daemon=True)
+    input_thread.start()
+    try:
+        assert completed.wait(3), "Approval received while rendering was cleared before the wait"
+        assert answered.is_set()
+        assert target.read_text(encoding="utf-8") == "status=approved\n"
+        assert state.pending_approval is None
+    finally:
+        approval_event.set()
+        input_thread.join(timeout=3)
+        worker = getattr(state, "tool_thread", None)
+        if worker is not None:
+            worker.join(timeout=3)
+
+
+def test_shortcut_turn_edit_grant_expires_before_next_submission(local_runtime):
+    from pathlib import Path
+
+    from nanocode.tools.edit_file import edit_file_tool
+
+    args, state = local_runtime
+    target = Path(args.cwd, "lesson.txt")
+    target.write_text("status=pending\n", encoding="utf-8")
+    args.tools = ToolRegistry([edit_file_tool])
+    pending = threading.Event()
+
+    def rerender():
+        if state.pending_approval is not None:
+            pending.set()
+
+    approval_event, approval_result, _ = install_permission_prompt(args, state, rerender)
+    for before, after, key in [("pending", "approved", "2"), ("approved", "pending", "5")]:
+        pending.clear()
+        _handle_input(
+            args, state, rerender,
+            submitted_raw_input=f"/edit lesson.txt::status={before}::status={after}",
+        )
+        try:
+            assert pending.wait(2), "Previous turn's grant suppressed a fresh approval"
+            _handle_event(
+                args, state, TextEvent(key, ctrl=False, meta=False), rerender,
+                approval_event, approval_result, _handle_input,
+            )
+            state.tool_thread.join(timeout=3)
+            assert not state.tool_thread.is_alive()
+        finally:
+            if state.pending_approval is not None and not approval_event.is_set():
+                _handle_event(
+                    args, state, KeyEvent("escape", ctrl=False, meta=False), rerender,
+                    approval_event, approval_result, _handle_input,
+                )
+            state.tool_thread.join(timeout=3)
+        assert not state.tool_thread.is_alive()
+        assert not state.is_busy
+        assert not args.permissions.turn_allowed_edits
+        assert not args.permissions.turn_allow_all_edits
+    assert target.read_text(encoding="utf-8") == "status=approved\n"
+    assert state.transcript[-1].status == "error"
+    assert len(state.session.checkpoints) == 2
 
 
 def test_clear_removes_old_view_and_selection_but_retains_durable_data(local_runtime):

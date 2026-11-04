@@ -1,0 +1,40 @@
+name: nanocode-memory
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: nanocode-mysql
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${NANOCODE_MYSQL_PORT:-3306}:3306"
+    environment:
+      MYSQL_DATABASE: ${NANOCODE_MYSQL_DATABASE:?Set the database name}
+      MYSQL_USER: ${NANOCODE_MYSQL_USER:?Set the database user}
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_password
+    secrets:
+      - mysql_root_password
+      - mysql_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --require-secure-transport=ON
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    stop_grace_period: 60s
+
+secrets:
+  mysql_root_password:
+    file: ../Data/Local/MySql/root_password
+  mysql_password:
+    file: ../Data/Local/MySql/application_password
+
+volumes:
+  mysql_data:
+    name: nanocode-mysql-data

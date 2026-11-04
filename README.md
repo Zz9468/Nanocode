@@ -186,7 +186,15 @@ NANOCODE_MYSQL_USER=YOUR_DATABASE_USER
 NANOCODE_MYSQL_PASSWORD=YOUR_DATABASE_PASSWORD
 ```
 
-The database must already exist; the account needs permission to create and update the memory tables. The connection uses TLS. The repository does not provision a MySQL server through Docker Compose.
+The database account needs permission to create and update the memory tables. The connection uses TLS. Connect to an existing database, or deploy local MySQL 8.4 with the dedicated [MySql.compose.yaml](./Package/AgentMemory/Config/MySql.compose.yaml).
+
+Before using this Compose file, create `root_password` and `application_password` files in `Package/AgentMemory/Data/Local/MySql/`; the latter must match `NANOCODE_MYSQL_PASSWORD` in `runtime.env`. These files live in the Git-ignored local data directory. From the repository root, run:
+
+```bash
+docker compose --env-file Package/AgentMemory/Data/Local/runtime.env -f Package/AgentMemory/Config/MySql.compose.yaml up -d --wait
+```
+
+The first start creates the configured database and application account. Data persists in the `nanocode-mysql-data` volume, and the port binds only to localhost. The container uses `unless-stopped`: it resumes when Docker starts, unless manually stopped; then use `docker start nanocode-mysql`. NanoCode itself does not start Docker or MySQL. Docker Desktop can be configured to start when you sign in.
 
 Configure the model services separately for semantic indexing and memory processing:
 
