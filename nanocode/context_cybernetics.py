@@ -679,7 +679,6 @@ class ContextCyberneticsOrchestrator:
         self._last_error_rate = error_rate
         self._last_avg_latency = avg_latency
 
-        estimate_fn = self.compactor._estimate
         total_tokens = self.compactor.count_tokens(messages)
         context_window = self.compactor._context_window
 

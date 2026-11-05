@@ -331,13 +331,7 @@ class AnthropicModelAdapter:
         stop_reason = None
         
         # Streaming cost tracking
-        stream_input_tokens = 0
-        stream_output_tokens = 0
-        stream_cache_read_tokens = 0
-        stream_cache_creation_tokens = 0
-        stream_input_usage_received = False
-        stream_output_usage_received = False
-        stream_raw_usage = {}
+        stream_raw_usage: dict[str, Any] = {}
         
         for line in response:
             line_str = line.decode("utf-8").strip()
@@ -356,11 +350,7 @@ class AnthropicModelAdapter:
                 # Initial usage from message_start
                 msg = event.get("message", {})
                 usage = msg.get("usage") or {}
-                stream_input_usage_received = "input_tokens" in usage
                 stream_raw_usage.update(usage)
-                stream_input_tokens = usage.get("input_tokens", 0)
-                stream_cache_read_tokens = usage.get("cache_read_input_tokens", 0)
-                stream_cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
             elif etype == "content_block_start":
                 cb = event.get("content_block", {})
                 c_type = cb.get("type")
@@ -414,9 +404,6 @@ class AnthropicModelAdapter:
                 # Final output tokens from message_delta
                 usage = event.get("usage") or {}
                 stream_raw_usage.update(usage)
-                if "output_tokens" in usage:
-                    stream_output_usage_received = True
-                    stream_output_tokens = usage["output_tokens"]
             elif etype == "error":
                 err = event.get("error", {})
                 if store:

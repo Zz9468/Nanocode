@@ -20,7 +20,6 @@ from nanocode.api_retry import RETRYABLE_STATUS, calculate_backoff
 from nanocode.state import Store, AppState, record_api_usage, record_api_error, update_context_usage
 from nanocode.types import AgentStep, StepDiagnostics
 from nanocode.token_accounting import RequestTokenAccounting, fingerprint
-from nanocode.model_policy import resolve_model_policy
 
 DEFAULT_MAX_RETRIES = 4
 OPENAI_MODELS = {"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-5.5", "gpt5.5", "o1", "o1-mini", "o3-mini"}
@@ -420,9 +419,6 @@ class OpenAIModelAdapter:
         text_parts = []
         active_tool_calls: dict[int, dict[str, Any]] = {}
         stop_reason = None
-        stream_input_tokens = 0
-        stream_output_tokens = 0
-        stream_cache_read_tokens = 0
         stream_usage_received = False
         stream_raw_usage = {}
         
@@ -442,9 +438,6 @@ class OpenAIModelAdapter:
             if "prompt_tokens" in usage and "completion_tokens" in usage:
                 stream_usage_received = True
                 stream_raw_usage = dict(usage)
-                stream_input_tokens = usage["prompt_tokens"]
-                stream_output_tokens = usage["completion_tokens"]
-                stream_cache_read_tokens = min(stream_input_tokens, (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0))
             choices = event.get("choices", [])
             if not choices:
                 continue

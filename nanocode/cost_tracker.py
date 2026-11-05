@@ -12,16 +12,11 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from nanocode.model_policy import MODEL_PRICING as MODEL_PRICING, resolve_model_policy
+
 # Precomputed Decimal constants for performance
 _DECIMAL_1M = Decimal("1000000")
 _DECIMAL_2 = Decimal("2")
-
-# ---------------------------------------------------------------------------
-# Pricing (approximate, per 1M tokens)
-# ---------------------------------------------------------------------------
-
-from nanocode.model_policy import MODEL_PRICING, PriceQuote, resolve_model_policy
-
 
 # ---------------------------------------------------------------------------
 # Cost calculation (standalone function for use outside CostTracker)

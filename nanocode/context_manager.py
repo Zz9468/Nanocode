@@ -13,26 +13,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from nanocode.config import NANO_CODE_DIR
+from nanocode.model_policy import (
+    DEFAULT_CONTEXT_WINDOWS as DEFAULT_CONTEXT_WINDOWS,
+    ModelContextWindow as ModelContextWindow,
+    get_model_context_window,
+)
+from nanocode.token_accounting import TokenMeasurement, estimate_text_tokens, fingerprint, preserve_constraints
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-# Default context window sizes (tokens)
-from nanocode.model_policy import DEFAULT_CONTEXT_WINDOWS
-
-
-# ---------------------------------------------------------------------------
-# Model context window resolution (port of TS getModelContextWindow).
-# Case-insensitive substring matching with an output reserve, so model ids like
-# "claude-opus-4-6", "CLAUDE-...", or "anthropic/claude-3-5-sonnet-latest"
-# resolve correctly instead of falling through to the 128k default.
-# ---------------------------------------------------------------------------
-
-
-from nanocode.model_policy import ModelContextWindow, get_model_context_window
-from nanocode.token_accounting import TokenMeasurement, estimate_text_tokens, fingerprint, preserve_constraints
 
 # Auto-compaction threshold (95% of context window)
 AUTOCOMPACT_THRESHOLD = 0.95
@@ -51,9 +42,6 @@ SYSTEM_PROMPT_RESERVED = 1
 # Token estimation
 # ---------------------------------------------------------------------------
 
-# 预编译的正则表达式用于快速 CJK 字符检测
-_CJK_PATTERN = re.compile(r'[\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]')
-
 # LRU 缓存：token 估算被频繁调用（每条消息、每次上下文检查），
 # 相同文本的 token 数是确定性的，缓存可避免重复计算。
 _token_cache: dict[str, int] = {}
@@ -61,15 +49,7 @@ _TOKEN_CACHE_MAX = 1024
 
 
 def estimate_tokens(text: str) -> int:
-    """改进的 token 估算，支持中英文
-    
-    - 英文/代码：约 4 字符/token
-    - 中文/日文：约 1.5 字符/token
-    - 混合文本：使用启发式估算
-    
-    性能优化：使用正则表达式替代逐字符 ord() 检查，速度快 10-50 倍。
-    带 LRU 缓存避免重复计算相同文本。
-    """
+    """缓存共享的中英文启发式 token 估算，避免重复计算相同文本。"""
     if not text:
         return 0
     
@@ -78,12 +58,6 @@ def estimate_tokens(text: str) -> int:
     cached = _token_cache.get(cache_key)
     if cached is not None:
         return cached
-
-    # 使用正则表达式快速统计 CJK 字符数量
-    cjk_count = len(_CJK_PATTERN.findall(text))
-
-    # CJK 字符约 1.5 字符/token，英文约 4 字符/token
-    ascii_chars = len(text) - cjk_count
 
     result = estimate_text_tokens(text)
 
