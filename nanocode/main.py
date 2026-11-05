@@ -515,6 +515,7 @@ def main() -> None:
         context_mgr = None
         if runtime:
             context_mgr = ContextManager(model=runtime.get("model", "default"))
+            context_mgr.configure_accounting(model)
             logger.info("Context manager initialized for model: %s", runtime.get("model", "unknown"))
     
         # Initialize MemoryManager for cross-session knowledge retention

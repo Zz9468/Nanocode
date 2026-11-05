@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from copy import deepcopy
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Callable
@@ -11,8 +12,9 @@ from nanocode.api_retry import (
     RETRYABLE_STATUS,
     calculate_backoff,
 )
-from nanocode.state import add_cost, record_api_error, update_context_usage
+from nanocode.state import record_api_usage, record_api_error, update_context_usage
 from nanocode.types import AgentStep, StepDiagnostics
+from nanocode.token_accounting import RequestTokenAccounting, fingerprint
 
 if TYPE_CHECKING:
     from nanocode.state import Store, AppState
@@ -148,13 +150,14 @@ class AnthropicModelAdapter:
         self.tools = tools
         # Cache the serialized tool list — tools rarely change within a session
         self._cached_tools_json: list[dict[str, Any]] | None = None
-        self._tools_cache_key: int = 0  # hash of tool list for invalidation
+        self._tools_cache_key = ""
+        self.token_accounting = RequestTokenAccounting(runtime, _messages_endpoint(runtime.get("baseUrl", "")), "anthropic", self.build_request_body, self.request_headers)  # hash of tool list for invalidation
         self._thinking_blocks: list[dict[str, Any]] = []  # Preserve thinking blocks for round-trip
 
     def _get_serialized_tools(self) -> list[dict[str, Any]]:
         """Get serialized tool list with caching."""
         current_tools = self.tools.list()
-        current_key = hash(tuple((t.name, t.description) for t in current_tools))
+        current_key = fingerprint([(t.name, t.description, t.input_schema) for t in current_tools])
         if self._cached_tools_json is None or current_key != self._tools_cache_key:
             self._cached_tools_json = [
                 {
@@ -167,7 +170,7 @@ class AnthropicModelAdapter:
             self._tools_cache_key = current_key
         return self._cached_tools_json
 
-    def next(self, messages: list[dict[str, Any]], on_stream_chunk: Callable[[str], None] | None = None, on_thinking_delta: Callable[[str], None] | None = None, store: Store[AppState] | None = None) -> AgentStep:
+    def build_request_body(self, messages: list[dict], stream: bool = False) -> dict:
         system_message, converted_messages = _to_anthropic_messages(messages)
 
         # Replay stored thinking blocks into the first assistant message
@@ -181,7 +184,6 @@ class AnthropicModelAdapter:
                         converted_messages[i] = dict(msg)
                         converted_messages[i]["content"] = list(self._thinking_blocks) + content
                         break
-            self._thinking_blocks = []
 
         request_body = {
             "model": self.runtime.get("model", ""),
@@ -193,10 +195,39 @@ class AnthropicModelAdapter:
         # but require round-trip preservation our message format can't provide
         if self.runtime.get("disableThinking"):
             request_body["thinking"] = {"type": "disabled"}
-        if self.runtime.get("maxOutputTokens") is not None:
-            request_body["max_tokens"] = self.runtime["maxOutputTokens"]
-        if on_stream_chunk:
+        policy = self.token_accounting.policy
+        request_body["max_tokens"] = int(self.runtime.get("maxOutputTokens") or policy.output_reserve)
+        if request_body["max_tokens"] > policy.max_output_tokens:
+            raise ValueError("Requested output exceeds model maxOutputTokens")
+        if stream:
             request_body["stream"] = True
+
+        return deepcopy(request_body)
+
+    def request_headers(self) -> dict:
+        return {"content-type": "application/json", "anthropic-version": "2023-06-01", **({"x-api-key": self.runtime["apiKey"]} if self.runtime.get("apiKey") else {"Authorization": f"Bearer {self.runtime.get('authToken', '')}"})}
+
+    def record_response_usage(self, body: dict, usage: dict, store, started: float) -> None:
+        source = "provider" if "input_tokens" in usage and "output_tokens" in usage else "unavailable"
+        input_tokens = int(usage.get("input_tokens", 0) or 0)
+        output_tokens = int(usage.get("output_tokens", 0) or 0)
+        cached = int(usage.get("cache_read_input_tokens", 0) or 0)
+        written = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        total_input = input_tokens + cached + written
+        if source == "provider":
+            self.token_accounting.observe(body, usage, total_input)
+        if store:
+            store.set_state(record_api_usage(self.runtime.get("model", ""), input_tokens, output_tokens,
+                cache_read_tokens=cached, cache_write_tokens=written, duration_ms=int((time.monotonic() - started) * 1000),
+                usage_source=source, runtime=self.runtime, endpoint=self.token_accounting.endpoint,
+                request_hash=self.token_accounting.request_hash(body), raw_usage=usage))
+            store.set_state(update_context_usage(total_input + output_tokens))
+
+    def next(self, messages: list[dict[str, Any]], on_stream_chunk: Callable[[str], None] | None = None, on_thinking_delta: Callable[[str], None] | None = None, store: Store[AppState] | None = None) -> AgentStep:
+        self.token_accounting.check_request_budget(messages)
+        request_started = time.monotonic()
+        request_body = self.build_request_body(messages, stream=bool(on_stream_chunk))
+        self._thinking_blocks = []
 
         request = urllib.request.Request(
             url=_messages_endpoint(self.runtime.get("baseUrl", "")),
@@ -251,33 +282,11 @@ class AnthropicModelAdapter:
             status = getattr(response, "status", getattr(response, "code", 200))
             if status >= 400:
                 if store:
-                    store.set_state(record_api_error())
+                    store.set_state(record_api_error(self.runtime.get("model", "")))
                 raise RuntimeError(_extract_error_message(data, status))
     
-            # Update store with API call success and cost tracking
-            if store:
-                # Calculate token usage and cost (with cache support)
-                from nanocode.cost_tracker import calculate_cost
-                usage = data.get("usage", {})
-                input_tokens = usage.get("input_tokens", 0)
-                output_tokens = usage.get("output_tokens", 0)
-                cache_read_tokens = usage.get("cache_read_input_tokens", 0)
-                cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
-                
-                cost_usd = calculate_cost(
-                    model=self.runtime.get("model", ""),
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                    cache_creation_tokens=cache_creation_tokens,
-                )
-                if cost_usd > 0:
-                    store.set_state(add_cost(cost_usd))
-                
-                # Update context usage
-                total_tokens = input_tokens + output_tokens
-                store.set_state(update_context_usage(total_tokens))
-    
+            self.record_response_usage(request_body, data.get("usage") or {}, store, request_started)
+
             tool_calls: list[dict[str, Any]] = []
             text_parts: list[str] = []
             block_types: list[str] = []
@@ -326,6 +335,9 @@ class AnthropicModelAdapter:
         stream_output_tokens = 0
         stream_cache_read_tokens = 0
         stream_cache_creation_tokens = 0
+        stream_input_usage_received = False
+        stream_output_usage_received = False
+        stream_raw_usage = {}
         
         for line in response:
             line_str = line.decode("utf-8").strip()
@@ -343,7 +355,9 @@ class AnthropicModelAdapter:
             if etype == "message_start":
                 # Initial usage from message_start
                 msg = event.get("message", {})
-                usage = msg.get("usage", {})
+                usage = msg.get("usage") or {}
+                stream_input_usage_received = "input_tokens" in usage
+                stream_raw_usage.update(usage)
                 stream_input_tokens = usage.get("input_tokens", 0)
                 stream_cache_read_tokens = usage.get("cache_read_input_tokens", 0)
                 stream_cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
@@ -398,28 +412,19 @@ class AnthropicModelAdapter:
                 if "stop_reason" in delta:
                     stop_reason = delta["stop_reason"]
                 # Final output tokens from message_delta
-                usage = event.get("usage", {})
-                if usage.get("output_tokens"):
+                usage = event.get("usage") or {}
+                stream_raw_usage.update(usage)
+                if "output_tokens" in usage:
+                    stream_output_usage_received = True
                     stream_output_tokens = usage["output_tokens"]
             elif etype == "error":
                 err = event.get("error", {})
+                if store:
+                    store.set_state(record_api_error(self.runtime.get("model", "")))
                 raise RuntimeError(f"Streaming error: {err.get('message', 'Unknown')}")
         
-        # Update store with streaming cost tracking
-        if store:
-            from nanocode.cost_tracker import calculate_cost
-            cost_usd = calculate_cost(
-                model=self.runtime.get("model", ""),
-                input_tokens=stream_input_tokens,
-                output_tokens=stream_output_tokens,
-                cache_read_tokens=stream_cache_read_tokens,
-                cache_creation_tokens=stream_cache_creation_tokens,
-            )
-            if cost_usd > 0:
-                store.set_state(add_cost(cost_usd))
-            total_tokens = stream_input_tokens + stream_output_tokens
-            store.set_state(update_context_usage(total_tokens))
-                
+        self.record_response_usage(request_body, stream_raw_usage, store, request_started)
+
         parsed_text, kind = _parse_assistant_text("".join(text_parts).strip())
         diagnostics = StepDiagnostics(
             stopReason=stop_reason,

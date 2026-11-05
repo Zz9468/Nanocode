@@ -9,15 +9,18 @@ from __future__ import annotations
 import json
 import os
 import time
+from copy import deepcopy
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from nanocode.api_retry import RETRYABLE_STATUS, calculate_backoff
-from nanocode.cost_tracker import calculate_cost
-from nanocode.state import Store, AppState, add_cost, record_api_error, update_context_usage
+from nanocode.state import Store, AppState, record_api_usage, record_api_error, update_context_usage
 from nanocode.types import AgentStep, StepDiagnostics
+from nanocode.token_accounting import RequestTokenAccounting, fingerprint
+from nanocode.model_policy import resolve_model_policy
 
 DEFAULT_MAX_RETRIES = 4
 OPENAI_MODELS = {"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-5.5", "gpt5.5", "o1", "o1-mini", "o3-mini"}
@@ -192,12 +195,13 @@ class OpenAIModelAdapter:
         self.runtime = runtime
         self.tools = tools
         self._cached_tools_json: list[dict[str, Any]] | None = None
-        self._tools_cache_key: int = 0
+        self._tools_cache_key = ""
+        self.token_accounting = RequestTokenAccounting(runtime, _get_openai_chat_completions_url(runtime), "openai", self.build_request_body, self.request_headers)
     
     def _get_serialized_tools(self) -> list[dict[str, Any]]:
         """Get serialized tool list in OpenAI function format with caching."""
         current_tools = self.tools.list()
-        current_key = hash(tuple((t.name, t.description) for t in current_tools))
+        current_key = fingerprint([(t.name, t.description, t.input_schema) for t in current_tools])
         if self._cached_tools_json is None or current_key != self._tools_cache_key:
             self._cached_tools_json = [
                 {
@@ -213,13 +217,7 @@ class OpenAIModelAdapter:
             self._tools_cache_key = current_key
         return self._cached_tools_json
     
-    def next(
-        self,
-        messages: list[dict[str, Any]],
-        on_stream_chunk: Callable[[str], None] | None = None,
-        on_thinking_delta: Callable[[str], None] | None = None,
-        store: Store[AppState] | None = None,
-    ) -> AgentStep:
+    def build_request_body(self, messages: list[dict], stream: bool = False) -> dict:
         system_message, converted_messages = _to_openai_messages(messages)
         
         request_body: dict[str, Any] = {
@@ -231,12 +229,59 @@ class OpenAIModelAdapter:
         if system_message:
             request_body["messages"].insert(0, {"role": "system", "content": system_message})
         
-        if self.runtime.get("maxOutputTokens") is not None:
-            request_body["max_tokens"] = self.runtime["maxOutputTokens"]
+        policy = self.token_accounting.policy
+        request_body["max_tokens"] = int(self.runtime.get("maxOutputTokens") or policy.output_reserve)
+        if request_body["max_tokens"] > policy.max_output_tokens:
+            raise ValueError("Requested output exceeds model maxOutputTokens")
         
-        if on_stream_chunk:
+        if stream:
             request_body["stream"] = True
+            host = urlsplit(_get_openai_chat_completions_url(self.runtime)).hostname or ""
+            include_usage = self.runtime.get("streamUsage")
+            if include_usage is True or (include_usage is None and
+                    (host in {"api.openai.com", "dashscope.aliyuncs.com"} or host.endswith(".maas.aliyuncs.com"))):
+                request_body["stream_options"] = {"include_usage": True}
         
+        # OpenRouter extra params (transforms, etc.)
+        openrouter_params = self.runtime.get("_openrouter_params", {})
+        for k, v in openrouter_params.items():
+            if v is not None:
+                request_body[k] = v
+
+        return deepcopy(request_body)
+
+    def request_headers(self) -> dict:
+        return {"content-type": "application/json", "Authorization": f"Bearer {_get_openai_api_key(self.runtime)}", "User-Agent": DEFAULT_OPENAI_USER_AGENT, **self.runtime.get("_openrouter_headers", {}), **self.runtime.get("_custom_headers", {})}
+
+    def record_response_usage(self, body: dict, usage: dict, store, started: float, source: str = "provider") -> None:
+        available = "prompt_tokens" in usage and "completion_tokens" in usage
+        source = source if available else "unavailable"
+        input_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        output_tokens = int(usage.get("completion_tokens", 0) or 0)
+        details = usage.get("prompt_tokens_details") or {}
+        cached = min(input_tokens, int(details.get("cached_tokens", 0) or 0))
+        written = min(input_tokens - cached, int(details.get("cache_creation_input_tokens", 0) or 0))
+        if source == "provider":
+            self.token_accounting.observe(body, usage, input_tokens)
+        if store:
+            store.set_state(record_api_usage(self.runtime.get("model", ""), input_tokens - cached - written, output_tokens,
+                cache_read_tokens=cached, cache_write_tokens=written, duration_ms=int((time.monotonic() - started) * 1000),
+                usage_source=source, runtime=self.runtime, endpoint=self.token_accounting.endpoint,
+                request_hash=self.token_accounting.request_hash(body),
+                raw_usage=usage if source == "provider" else {}))
+            store.set_state(update_context_usage(input_tokens + output_tokens))
+
+    def next(
+        self,
+        messages: list[dict[str, Any]],
+        on_stream_chunk: Callable[[str], None] | None = None,
+        on_thinking_delta: Callable[[str], None] | None = None,
+        store: Store[AppState] | None = None,
+    ) -> AgentStep:
+        self.token_accounting.check_request_budget(messages)
+        request_started = time.monotonic()
+        request_body = self.build_request_body(messages, stream=bool(on_stream_chunk))
+
         api_key = _get_openai_api_key(self.runtime)
         
         # Build headers — support OpenRouter and custom endpoints
@@ -251,12 +296,6 @@ class OpenAIModelAdapter:
         # Custom endpoint extra headers
         custom_headers = self.runtime.get("_custom_headers", {})
         headers.update(custom_headers)
-
-        # OpenRouter extra params (transforms, etc.)
-        openrouter_params = self.runtime.get("_openrouter_params", {})
-        for k, v in openrouter_params.items():
-            if v is not None:
-                request_body[k] = v
 
         request = urllib.request.Request(
             url=_get_openai_chat_completions_url(self.runtime),
@@ -308,7 +347,7 @@ class OpenAIModelAdapter:
             
             if status >= 400:
                 if store:
-                    store.set_state(record_api_error())
+                    store.set_state(record_api_error(self.runtime.get("model", "")))
                 error_msg = (
                     data.get("error", {}).get("message")
                     or raw_text.strip()
@@ -320,20 +359,8 @@ class OpenAIModelAdapter:
                     "OpenAI-compatible endpoint returned a non-JSON success payload."
                 )
             
-            # Cost tracking
-            if store:
-                usage = data.get("usage", {})
-                input_tokens = usage.get("prompt_tokens", 0)
-                output_tokens = usage.get("completion_tokens", 0)
-                cost_usd = calculate_cost(
-                    model=self.runtime.get("model", ""),
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
-                if cost_usd > 0:
-                    store.set_state(add_cost(cost_usd))
-                store.set_state(update_context_usage(input_tokens + output_tokens))
-            
+            self.record_response_usage(request_body, data.get("usage") or {}, store, request_started)
+
             # Parse response
             choices = data.get("choices", [])
             if not choices:
@@ -381,7 +408,7 @@ class OpenAIModelAdapter:
         if isinstance(response, _BufferedHTTPResponse):
             data, raw_text = _parse_openai_response_body(response)
             if store:
-                store.set_state(record_api_error())
+                store.set_state(record_api_error(self.runtime.get("model", "")))
             error_msg = (
                 data.get("error", {}).get("message")
                 or raw_text.strip()
@@ -395,6 +422,9 @@ class OpenAIModelAdapter:
         stop_reason = None
         stream_input_tokens = 0
         stream_output_tokens = 0
+        stream_cache_read_tokens = 0
+        stream_usage_received = False
+        stream_raw_usage = {}
         
         for line in response:
             line_str = line.decode("utf-8").strip()
@@ -408,13 +438,15 @@ class OpenAIModelAdapter:
             except json.JSONDecodeError:
                 continue
             
+            usage = event.get("usage") or {}
+            if "prompt_tokens" in usage and "completion_tokens" in usage:
+                stream_usage_received = True
+                stream_raw_usage = dict(usage)
+                stream_input_tokens = usage["prompt_tokens"]
+                stream_output_tokens = usage["completion_tokens"]
+                stream_cache_read_tokens = min(stream_input_tokens, (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0))
             choices = event.get("choices", [])
             if not choices:
-                # Maybe usage info
-                usage = event.get("usage", {})
-                if usage:
-                    stream_input_tokens = usage.get("prompt_tokens", 0)
-                    stream_output_tokens = usage.get("completion_tokens", 0)
                 continue
             
             delta = choices[0].get("delta", {})
@@ -459,24 +491,14 @@ class OpenAIModelAdapter:
                 "input": parsed_input,
             })
         
-        # Streaming cost tracking
-        if store:
-            # Estimate if not provided in stream
-            if stream_input_tokens == 0:
-                from nanocode.context_manager import estimate_messages_tokens
-                stream_input_tokens = estimate_messages_tokens(messages)
-            if stream_output_tokens == 0:
-                stream_output_tokens = len("".join(text_parts)) // 4
-            
-            cost_usd = calculate_cost(
-                model=self.runtime.get("model", ""),
-                input_tokens=stream_input_tokens,
-                output_tokens=stream_output_tokens,
-            )
-            if cost_usd > 0:
-                store.set_state(add_cost(cost_usd))
-            store.set_state(update_context_usage(stream_input_tokens + stream_output_tokens))
-        
+        if stream_usage_received:
+            self.record_response_usage(request_body, stream_raw_usage, store, request_started)
+        else:
+            estimated_input = self.token_accounting.measure(messages).input_tokens
+            estimated_output = max(0, len("".join(text_parts) + json.dumps(tool_calls)) // 4)
+            self.record_response_usage(request_body, {"prompt_tokens": estimated_input, "completion_tokens": estimated_output},
+                                       store, request_started, source="estimated")
+
         parsed_text, kind = _parse_assistant_text("".join(text_parts).strip())
         diagnostics = StepDiagnostics(
             stopReason=stop_reason,

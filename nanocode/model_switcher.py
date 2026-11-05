@@ -261,7 +261,7 @@ class ModelSwitcher:
                         latency_pressure=float(self._runtime.get("latencyPressure", 0.0) or 0.0),
                         recent_failures=int(self._runtime.get("recentFailures", 0) or 0),
                         current_model=self._current_model,
-                    )
+                    ), runtime=self._runtime,
                 )
                 if decision.fallback_model:
                     candidates.append(decision.fallback_model)

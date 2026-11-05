@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -183,9 +184,6 @@ class ToolResultBudgetManager:
         Returns:
             Tuple of (modified_messages, total_bytes_saved)
         """
-        if not self._results_dir.exists():
-            self._results_dir.mkdir(parents=True, exist_ok=True)
-
         modified = list(messages)
         bytes_saved = 0
 
@@ -201,6 +199,17 @@ class ToolResultBudgetManager:
                 content = "" if content is None else str(content)
                 modified[i] = {**msg, "content": content}
                 msg = modified[i]
+
+            # A saved preview may be replayed by a new manager after resume.
+            # Only the unchanged, bounded preview is exempt from re-persisting.
+            if (
+                msg.get("_persisted_path")
+                and content.startswith("[Tool result persisted to disk")
+                and len(content) <= self.PREVIEW_MAX_CHARS
+                and msg.get("_budget_preview_hash")
+                == hashlib.sha256(content.encode("utf-8")).hexdigest()
+            ):
+                continue
             content_size = len(content)
 
             if content_size <= self._persist_threshold:
@@ -210,7 +219,12 @@ class ToolResultBudgetManager:
             persisted = self._persist_content(content, tool_name, i)
 
             preview = self._generate_preview(content, tool_name, persisted.persisted_path)
-            modified[i] = {**msg, "content": preview, "_persisted_path": str(persisted.persisted_path)}
+            modified[i] = {
+                **msg,
+                "content": preview,
+                "_persisted_path": str(persisted.persisted_path),
+                "_budget_preview_hash": hashlib.sha256(preview.encode("utf-8")).hexdigest(),
+            }
             self._persisted[f"{i}-{tool_name}"] = persisted
             bytes_saved += content_size - len(preview)
 
@@ -220,7 +234,8 @@ class ToolResultBudgetManager:
         self, content: str, tool_name: str, index: int
     ) -> ToolResultPersisted:
         """Persist content to disk atomically."""
-        safe_name = f"{tool_name}_{index}_{int(time.time() * 1000)}.txt"
+        self._results_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = f"{tool_name}_{index}_{uuid4().hex}.txt"
         path = self._results_dir / safe_name
 
         meta = {
@@ -265,7 +280,7 @@ class ToolResultBudgetManager:
         parts = [
             f"[Tool result persisted to disk — {len(content)} chars]",
             f"Tool: {tool_name}",
-            f"Path: {path.name}",
+            f"Path: {path}",
             "",
             "--- Preview (first/last lines) ---",
         ]
@@ -619,6 +634,7 @@ class AutoCompactDispatcher:
         self,
         context_window: int = 200000,
         config: AutoCompactConfig | None = None,
+        total_count_fn=None,
         memory_manager=None,
         estimate_fn=None,
     ):
@@ -626,6 +642,7 @@ class AutoCompactDispatcher:
         self._config = config or AutoCompactConfig()
         self._memory = memory_manager
         self._estimate = estimate_fn or (lambda m: len(str(m)) // 4)
+        self._count = total_count_fn or (lambda messages: sum(self._estimate(m) for m in messages))
         self._consecutive_failures = 0
         self._last_failure_time: float = 0.0
         self._boundaries: list[CompactBoundary] = []
@@ -684,7 +701,7 @@ class AutoCompactDispatcher:
             if not self._maybe_auto_recover():
                 return False
 
-        usage = token_usage or sum(self._estimate(m) for m in messages)
+        usage = token_usage if token_usage is not None else self._count(messages)
         return usage >= self.threshold_tokens
 
     def dispatch(
@@ -702,7 +719,7 @@ class AutoCompactDispatcher:
                 messages=messages,
             )
 
-        usage = token_usage or sum(self._estimate(m) for m in messages)
+        usage = token_usage if token_usage is not None else self._count(messages)
         logger.info(
             "Auto Compact dispatch: usage=%d, threshold=%d, circuit_breaker=%s",
             usage,
@@ -719,9 +736,17 @@ class AutoCompactDispatcher:
                 self._config,
             )
             if sm_result and sm_result.effective:
-                self._on_success(sm_result.boundary)
-                self._suppress_warnings()
-                return sm_result
+                from nanocode.token_accounting import preserve_constraints
+                sm_result.messages = preserve_constraints(messages, sm_result.messages)
+                sm_result.tokens_freed = usage - self._count(sm_result.messages)
+                if sm_result.boundary:
+                    sm_result.boundary.tokens_before = usage
+                    sm_result.boundary.tokens_after = self._count(sm_result.messages)
+                    sm_result.boundary.messages_removed = len(messages) - len(sm_result.messages)
+                if sm_result.effective:
+                    self._on_success(sm_result.boundary)
+                    self._suppress_warnings()
+                    return sm_result
 
         # Fall back to Full Compact
         return self._run_full_compact(messages, usage)
@@ -769,7 +794,9 @@ class AutoCompactDispatcher:
         tail = non_system[-tail_size:] if tail_size > 0 else []
         compacted.extend(tail)
 
-        boundary.tokens_after = sum(self._estimate(m) for m in compacted)
+        from nanocode.token_accounting import preserve_constraints
+        compacted = preserve_constraints(messages, compacted)
+        boundary.tokens_after = self._count(compacted)
         boundary.messages_removed = len(messages) - len(compacted)
 
         self._on_success(boundary)
@@ -898,6 +925,7 @@ class ReactiveCompactEngine:
     ):
         self._auto_compact = auto_compact
         self._estimate = estimate_fn or (lambda m: len(str(m)) // 4)
+        self._count = auto_compact._count if auto_compact else lambda messages: sum(self._estimate(m) for m in messages)
         self._recovery_attempts = 0
 
     def try_recover_from_overflow(
@@ -933,7 +961,7 @@ class ReactiveCompactEngine:
             result = self._auto_compact.dispatch(messages, force_full=True)
 
             # Check if result is small enough
-            result_usage = sum(self._estimate(m) for m in result.messages)
+            result_usage = self._auto_compact._count(result.messages)
             if result_usage < self._auto_compact.blocking_limit * 0.9:
                 self._recovery_attempts = 0  # Reset on success
                 return CompactionResult(
@@ -973,12 +1001,14 @@ class ReactiveCompactEngine:
             "_reactive_compact": True,
         })
         truncated.extend(non_system[-keep_count:])
+        from nanocode.token_accounting import preserve_constraints
+        truncated = preserve_constraints(messages, truncated)
 
         boundary = CompactBoundary(
             trigger=CompactTrigger.REACTIVE,
             strategy=CompactStrategy.REACTIVE,
-            tokens_before=sum(self._estimate(m) for m in messages),
-            tokens_after=sum(self._estimate(m) for m in truncated),
+            tokens_before=self._count(messages),
+            tokens_after=self._count(truncated),
             messages_removed=len(messages) - len(truncated),
         )
 
@@ -1018,6 +1048,7 @@ class ContextCompactor:
         memory_manager=None,
         estimate_fn=None,
         config: AutoCompactConfig | None = None,
+        total_count_fn=None,
     ):
         self._context_window = context_window
         self._workspace = Path(workspace) if workspace else Path.cwd()
@@ -1031,12 +1062,17 @@ class ContextCompactor:
             config=config,
             memory_manager=memory_manager,
             estimate_fn=estimate_fn,
+            total_count_fn=total_count_fn,
         )
         self._reactive = ReactiveCompactEngine(self._auto_compact, estimate_fn)
         self._estimate = estimate_fn or (lambda m: len(str(m)) // 4)
+        self._count = total_count_fn or (lambda messages: sum(self._estimate(m) for m in messages))
 
         self._last_compact_result: CompactionResult | None = None
         self._total_optimization_passes = 0
+
+    def count_tokens(self, messages):
+        return self._count(messages)
 
     def process_request(
         self,
@@ -1075,13 +1111,17 @@ class ContextCompactor:
                 steps_taken.append(f"microcompact({mc_result.tokens_freed})")
 
         # Step 5+6: Auto Compact high-water dispatch
-        if enable_auto_compact and self._auto_compact.should_trigger(current):
-            ac_result = self._auto_compact.dispatch(current)
+        if enable_auto_compact and self._auto_compact.should_trigger(current, self._count(current)):
+            ac_result = self._auto_compact.dispatch(current, self._count(current))
             if ac_result.effective:
                 current = ac_result.messages
                 total_freed += ac_result.tokens_freed
                 steps_taken.append(f"auto_compact({ac_result.strategy.value},{ac_result.tokens_freed})")
                 self._last_compact_result = ac_result
+
+        from nanocode.token_accounting import preserve_constraints
+        current = preserve_constraints(messages, current)
+        total_freed = max(0, self._count(messages) - self._count(current))
 
         result = CompactionResult(
             success=total_freed > 0,

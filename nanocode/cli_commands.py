@@ -149,6 +149,8 @@ def try_handle_local_command(
     tools=None,
     cwd: str | None = None,
     session=None,
+    cost_tracker=None,
+    context_manager=None,
 ) -> str | None:
     def _product_snapshot() -> dict:
         if session is not None:
@@ -713,7 +715,19 @@ def try_handle_local_command(
         except Exception as e:
             return f"Error loading memory: {e}"
 
+    if user_input.split()[:1] == ["/cost"]:
+        parts = user_input.split()
+        if parts not in (["/cost"], ["/cost", "--detailed"]):
+            return "Usage: /cost [--detailed]"
+        if cost_tracker is None:
+            return "Live cost tracking is not available in this command context."
+        return cost_tracker.format_cost_report(detailed=len(parts) == 2)
+
     if user_input == "/context":
+        if context_manager is not None:
+            if not context_manager.messages:
+                return "No request-context snapshot in the current session yet. Submit a model task first."
+            return context_manager.format_context_details()
         # Context usage display
         try:
             from nanocode.context_manager import load_context_state

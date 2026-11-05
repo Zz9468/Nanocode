@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar
 
+from nanocode.cost_tracker import CostTracker
+
 T = TypeVar("T")
 
 
@@ -128,6 +130,7 @@ class AppState:
     total_cost_usd: float = 0.0
     api_calls: int = 0
     api_errors: int = 0
+    cost_tracker: CostTracker = field(default_factory=CostTracker)
     
     # Task tracking
     active_tasks: int = 0
@@ -206,7 +209,7 @@ def format_app_state_summary(state: AppState) -> str:
         f"({state.context_usage_percentage:.1f}%)",
         "",
         "Cost:",
-        f"  Total: ${state.total_cost_usd:.4f}",
+        f"  {state.cost_tracker.format_short_summary()}" if state.cost_tracker.get_total_calls() else f"  Total: USD {state.total_cost_usd:.4f}",
         f"  API calls: {state.api_calls}",
         f"  API errors: {state.api_errors}",
         "",
@@ -273,11 +276,41 @@ def add_cost(cost_usd: float) -> Callable[[AppState], AppState]:
     return updater
 
 
-def record_api_error() -> Callable[[AppState], AppState]:
+def record_api_usage(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    duration_ms: int = 0,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    usage_source: str = "provider",
+    runtime: dict | None = None,
+    endpoint: str | None = None,
+    request_hash: str = "",
+    raw_usage: dict | None = None,
+) -> Callable[[AppState], AppState]:
+    """Record one response in the live report and compatibility counters."""
+    def updater(state: AppState) -> AppState:
+        cost = state.cost_tracker.add_usage(
+            model, input_tokens, output_tokens, duration_ms,
+            cache_read_tokens, cache_write_tokens, usage_source=usage_source, runtime=runtime,
+            endpoint=endpoint, request_hash=request_hash, raw_usage=raw_usage,
+        )
+        state.total_cost_usd += cost
+        state.api_calls += 1
+        state.update_timestamp()
+        return state
+    return updater
+
+
+def record_api_error(model: str | None = None) -> Callable[[AppState], AppState]:
     """Create an updater that records an API error."""
     def updater(state: AppState) -> AppState:
         state.api_errors += 1
         state.api_calls += 1
+        if model is not None:
+            state.cost_tracker.record_error(model)
         state.update_timestamp()
         return state
     return updater

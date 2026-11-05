@@ -20,33 +20,7 @@ from nanocode.config import NANO_CODE_DIR
 # ---------------------------------------------------------------------------
 
 # Default context window sizes (tokens)
-DEFAULT_CONTEXT_WINDOWS = {
-    # Anthropic
-    "claude-sonnet-4-20250514": 200_000,
-    "claude-opus-4-20250514": 200_000,
-    "claude-haiku-3-20240307": 100_000,
-    # OpenAI
-    "gpt-4o": 128_000,
-    "gpt-4o-mini": 128_000,
-    "gpt-4-turbo": 128_000,
-    "o1": 200_000,
-    "o1-mini": 128_000,
-    "o3-mini": 200_000,
-    # OpenRouter popular models
-    "openrouter/auto": 200_000,
-    "anthropic/claude-sonnet-4": 200_000,
-    "anthropic/claude-opus-4": 200_000,
-    "openai/gpt-4o": 128_000,
-    "openai/gpt-4o-mini": 128_000,
-    "google/gemini-2.5-pro": 1_000_000,
-    "google/gemini-2.5-flash": 1_000_000,
-    "meta-llama/llama-4-maverick": 1_000_000,
-    "deepseek/deepseek-r1": 128_000,
-    "deepseek/deepseek-chat": 128_000,
-    "qwen/qwen3-235b-a22b": 128_000,
-    "minimax/minimax-m1": 1_000_000,
-    "default": 128_000,  # Fallback
-}
+from nanocode.model_policy import DEFAULT_CONTEXT_WINDOWS
 
 
 # ---------------------------------------------------------------------------
@@ -57,53 +31,8 @@ DEFAULT_CONTEXT_WINDOWS = {
 # ---------------------------------------------------------------------------
 
 
-class ModelContextWindow:
-    __slots__ = ("context_window", "output_reserve", "effective_input")
-
-    def __init__(self, context_window: int, output_reserve: int) -> None:
-        self.context_window = context_window
-        self.output_reserve = output_reserve
-        self.effective_input = context_window - output_reserve
-
-
-_UNKNOWN_MODEL_CONTEXT = (128_000, 8_000)
-
-_MODEL_CONTEXT_RULES: list[tuple[list[str], int, int]] = [
-    (["claude-opus-4-6", "claude opus 4.6", "opus-4-6"], 200_000, 16_000),
-    (["claude-sonnet-4-6", "claude sonnet 4.6", "sonnet-4-6"], 200_000, 16_000),
-    (["claude-haiku-4-5", "claude haiku 4.5", "haiku-4-5"], 200_000, 16_000),
-    (["claude-opus-4-1", "claude opus 4.1", "opus-4-1", "claude-opus-4", "claude opus 4", "opus-4"], 200_000, 16_000),
-    (["claude-sonnet-4", "claude sonnet 4", "sonnet-4"], 200_000, 16_000),
-    (["claude-3-7-sonnet", "claude 3.7 sonnet", "3-7-sonnet"], 200_000, 8_192),
-    (["claude-3-5-sonnet", "claude 3.5 sonnet", "3-5-sonnet", "claude-3-sonnet"], 200_000, 8_192),
-    (["claude-3-5-haiku", "claude 3.5 haiku", "3-5-haiku"], 200_000, 8_192),
-    (["claude-3-opus", "claude 3 opus"], 200_000, 4_096),
-    (["claude-3-haiku", "claude 3 haiku"], 200_000, 4_096),
-    (["gpt-5-codex", "gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5"], 128_000, 16_000),
-    (["o4-mini", "o3", "o1-pro", "o1"], 200_000, 16_000),
-    (["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1"], 1_047_576, 16_000),
-    (["gpt-4o-mini", "gpt-4o"], 128_000, 16_384),
-    (["gpt-4"], 128_000, 8_192),
-    (["gemini-2.5-pro", "gemini 2.5 pro"], 1_048_576, 16_000),
-    (["gemini-2.5-flash-lite", "gemini 2.5 flash-lite"], 1_048_576, 16_000),
-    (["gemini-2.5-flash", "gemini 2.5 flash"], 1_048_576, 16_000),
-    (["deepseek-reasoner"], 128_000, 16_000),
-    (["deepseek-chat"], 128_000, 4_000),
-]
-
-
-def get_model_context_window(model: str) -> ModelContextWindow:
-    """Resolve a model id to its context window + output reserve.
-
-    Case-insensitive substring match (port of TS getModelContextWindow).
-    Falls back to 128k / 8k reserve for unknown models.
-    """
-    normalized = (model or "").strip().lower()
-    for patterns, context_window, output_reserve in _MODEL_CONTEXT_RULES:
-        if any(pattern in normalized for pattern in patterns):
-            return ModelContextWindow(context_window, output_reserve)
-    context_window, output_reserve = _UNKNOWN_MODEL_CONTEXT
-    return ModelContextWindow(context_window, output_reserve)
+from nanocode.model_policy import ModelContextWindow, get_model_context_window
+from nanocode.token_accounting import TokenMeasurement, estimate_text_tokens, fingerprint, preserve_constraints
 
 # Auto-compaction threshold (95% of context window)
 AUTOCOMPACT_THRESHOLD = 0.95
@@ -156,7 +85,7 @@ def estimate_tokens(text: str) -> int:
     # CJK 字符约 1.5 字符/token，英文约 4 字符/token
     ascii_chars = len(text) - cjk_count
 
-    result = max(1, int(cjk_count / 1.5 + ascii_chars / 4.0))
+    result = estimate_text_tokens(text)
 
     # 缓存结果（防止无限增长）
     if len(_token_cache) < _TOKEN_CACHE_MAX:
@@ -557,6 +486,13 @@ class ContextStats:
     tool_calls_count: int = 0
     is_near_limit: bool = False
     should_compact: bool = False
+    effective_input: int = 0
+    output_reserve: int = 0
+    safety_margin: int = 0
+    accounting_source: str = "message_estimate"
+    accounting_reason: str = ""
+    provider_input_anchor: int = 0
+    estimated_portion: int = 0
 
 
 @dataclass
@@ -566,6 +502,13 @@ class ContextManager:
     context_window: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
     compaction_history: list[dict[str, Any]] = field(default_factory=list)
+    accounting: Any = field(default=None, repr=False)
+    saved_accounting: dict | None = None
+    output_reserve: int = 0
+    safety_margin: int = 0
+    max_input_tokens: int = 0
+    limits_source: str = "local model-window mapping"
+    _window_explicit: bool = field(default=False, repr=False)
     _token_cache: dict[int, int] = field(default_factory=dict, repr=False)  # id(msg) -> tokens
     
     # 多级压缩支持
@@ -575,13 +518,54 @@ class ContextManager:
     _COMPACTION_LEVELS = [0.70, 0.50, 0.30]  # 轻度/中度/深度
     
     def __post_init__(self):
+        self._window_explicit = self.context_window > 0
         if self.context_window == 0:
             self.context_window = get_model_context_window(self.model).context_window
+
+    def configure_accounting(self, model) -> None:
+        accounting = getattr(model, "token_accounting", None)
+        if accounting is None:
+            return
+        self.accounting = accounting
+        policy = accounting.policy
+        self.model = policy.model
+        self.limits_source = policy.source
+        if not self._window_explicit:
+            self.context_window = policy.context_window
+        requested = accounting.runtime.get("maxOutputTokens")
+        self.output_reserve = int(requested or policy.output_reserve)
+        self.safety_margin = min(policy.safety_margin, self.context_window // 50)
+        self.max_input_tokens = min(policy.max_input_tokens, self.context_window)
+        if self.output_reserve > policy.max_output_tokens or self.effective_input <= 0:
+            raise ValueError("Output reserve leaves no model input budget")
+
+    @property
+    def effective_input(self) -> int:
+        return max(0, min(self.max_input_tokens or self.context_window,
+                          self.context_window - self.output_reserve) - self.safety_margin)
+
+    def measure(self, messages: list[dict], *, allow_remote=False) -> TokenMeasurement:
+        if self.accounting is not None:
+            return self.accounting.measure(messages, allow_remote=allow_remote)
+        if self.saved_accounting and self.saved_accounting.get("messages_hash") == fingerprint(messages):
+            return TokenMeasurement(**self.saved_accounting["measurement"])
+        count = estimate_messages_tokens(messages)
+        return TokenMeasurement(count, "message_estimate", False, fingerprint(messages), count,
+                                "No live prepared-request counter")
+
+    def count_tokens(self, messages: list[dict]) -> int:
+        return self.measure(messages).input_tokens
 
     def update_model(self, model: str) -> None:
         """Update model and adjust context window."""
         self.model = model
         self.context_window = get_model_context_window(model).context_window
+        self.accounting = None
+        self.saved_accounting = None
+        self.output_reserve = 0
+        self.safety_margin = 0
+        self.max_input_tokens = 0
+        self._window_explicit = False
     
     def add_message(self, message: dict[str, Any]) -> None:
         """Add a message and update tracking."""
@@ -595,7 +579,7 @@ class ContextManager:
         Uses cached token counts when available (O(1) amortized for
         messages added via add_message).
         """
-        if not self.messages:
+        if not self.messages and self.accounting is None:
             return ContextStats(
                 context_window=self.context_window,
             )
@@ -606,10 +590,7 @@ class ContextManager:
         tool_calls = 0
         
         for msg in self.messages:
-            msg_tokens = self._token_cache.get(id(msg))
-            if msg_tokens is None:
-                msg_tokens = estimate_message_tokens(msg)
-                self._token_cache[id(msg)] = msg_tokens
+            msg_tokens = estimate_message_tokens(msg)
             if msg.get("role") == "system":
                 system_tokens += msg_tokens
             else:
@@ -618,8 +599,9 @@ class ContextManager:
             if msg.get("role") == "assistant_tool_call":
                 tool_calls += 1
         
-        total_tokens = system_tokens + conversation_tokens
-        usage_pct = (total_tokens / self.context_window * 100) if self.context_window > 0 else 0
+        measurement = self.measure(self.messages)
+        total_tokens = measurement.input_tokens
+        usage_pct = total_tokens / max(1, self.effective_input) * 100
         
         is_near_limit = usage_pct >= 80  # Warning at 80%
         should_compact = usage_pct >= (AUTOCOMPACT_THRESHOLD * 100)
@@ -634,6 +616,10 @@ class ContextManager:
             tool_calls_count=tool_calls,
             is_near_limit=is_near_limit,
             should_compact=should_compact,
+            effective_input=self.effective_input, output_reserve=self.output_reserve, safety_margin=self.safety_margin,
+            accounting_source=measurement.source, accounting_reason=measurement.reason,
+            provider_input_anchor=measurement.input_tokens - measurement.estimated_tokens if measurement.source.startswith("provider_usage") else 0,
+            estimated_portion=measurement.estimated_tokens,
         )
     
     def should_auto_compact(self) -> bool:
@@ -681,7 +667,7 @@ class ContextManager:
         
         # Get target based on compaction level
         target_pct = self._COMPACTION_LEVELS[min(self._compaction_level, 2)]
-        target_tokens = int(self.context_window * target_pct)
+        target_tokens = int(self.effective_input * target_pct)
         
         # Always keep system prompt
         system_messages = [m for m in self.messages if m.get("role") == "system"]
@@ -693,7 +679,7 @@ class ContextManager:
             if m.get("role") != "assistant_progress"
         ]
         
-        current_tokens = estimate_messages_tokens(filtered)
+        current_tokens = self.count_tokens(filtered)
         if current_tokens <= target_tokens:
             return self._finalize_compaction(
                 system_messages, other_messages, filtered, stats, target_tokens
@@ -762,7 +748,7 @@ class ContextManager:
             
             filtered[i] = {**m, "content": truncated_content}
         
-        current_tokens = estimate_messages_tokens(filtered)
+        current_tokens = self.count_tokens(filtered)
         if current_tokens <= target_tokens:
             return self._finalize_compaction(
                 system_messages, other_messages, filtered, stats, target_tokens
@@ -802,7 +788,7 @@ class ContextManager:
                 compressed.append(msg)
                 i += 1
         
-        current_tokens = estimate_messages_tokens(compressed)
+        current_tokens = self.count_tokens(compressed)
         if current_tokens <= target_tokens:
             return self._finalize_compaction(
                 system_messages, other_messages, compressed, stats, target_tokens
@@ -823,7 +809,7 @@ class ContextManager:
         # Protect recent messages (last 6) from removal
         PROTECTED_RECENT = 6
         
-        while estimate_messages_tokens(compressed) > target_tokens and len(compressed) > MIN_MESSAGES_TO_KEEP:
+        while self.count_tokens(compressed) > target_tokens and len(compressed) > MIN_MESSAGES_TO_KEEP:
             # Find the message with the lowest priority (highest number) in the removable range
             removable_end = max(MIN_MESSAGES_TO_KEEP, len(compressed) - PROTECTED_RECENT)
             best_idx = None
@@ -918,7 +904,7 @@ class ContextManager:
         summary_text = _summarize_removed_messages(removed_messages)
         
         removed_count = len(original_other) - len(filtered)
-        after_pct = estimate_messages_tokens(filtered) / self.context_window * 100 if self.context_window > 0 else 0
+        after_pct = self.count_tokens(filtered) / self.context_window * 100 if self.context_window > 0 else 0
         
         # Add compaction marker with content summary
         compaction_marker = {
@@ -933,12 +919,13 @@ class ContextManager:
         
         # Build final message list
         compacted = system_messages + [compaction_marker] + filtered
+        compacted = preserve_constraints(self.messages, compacted)
         
         # Record compaction
         self.compaction_history.append({
             "timestamp": time.time(),
             "before_tokens": stats.total_tokens,
-            "after_tokens": estimate_messages_tokens(compacted),
+            "after_tokens": self.count_tokens(compacted),
             "messages_removed": len(self.messages) - len(compacted),
             "compaction_level": self._compaction_level,
         })
@@ -982,8 +969,14 @@ class ContextManager:
             "=" * 50,
             f"Model: {self.model}",
             f"Context window: {stats.context_window:,} tokens",
+            f"Limits source: {self.limits_source}",
             "",
             f"Total tokens: {stats.total_tokens:,}",
+            f"Accounting: {stats.accounting_source}",
+            f"Provider input anchor: {stats.provider_input_anchor:,}; estimated portion: {stats.estimated_portion:,}",
+            f"Effective input budget: {self.effective_input:,} tokens",
+            f"Output reserve: {self.output_reserve:,}; safety margin: {self.safety_margin:,}",
+            f"Counting note: {stats.accounting_reason or 'matching request accounting'}",
             f"Usage: {stats.usage_percentage:.1f}%",
             f"Messages: {stats.messages_count}",
             f"Tool calls: {stats.tool_calls_count}",
@@ -1021,6 +1014,8 @@ def save_context_state(manager: ContextManager) -> None:
         "context_window": manager.context_window,
         "messages": manager.messages,
         "compaction_history": manager.compaction_history[-10:],  # Keep last 10
+        "accounting": {"messages_hash": fingerprint(manager.messages), "measurement": manager.measure(manager.messages).to_dict()},
+        "output_reserve": manager.output_reserve, "safety_margin": manager.safety_margin, "max_input_tokens": manager.max_input_tokens, "limits_source": manager.limits_source,
         "_compaction_level": manager._compaction_level,  # Save compaction level
     }
     
@@ -1040,6 +1035,9 @@ def load_context_state() -> ContextManager | None:
             context_window=state.get("context_window", 0),
             messages=state.get("messages", []),
             compaction_history=state.get("compaction_history", []),
+            saved_accounting=state.get("accounting"),
+            output_reserve=state.get("output_reserve", 0), safety_margin=state.get("safety_margin", 0),
+            max_input_tokens=state.get("max_input_tokens", 0), limits_source=state.get("limits_source", "local model-window mapping"),
         )
         # Restore compaction level if saved
         if "_compaction_level" in state:

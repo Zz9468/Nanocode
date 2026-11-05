@@ -17,7 +17,7 @@ from nanocode.tooling import ToolContext
 from nanocode.types import RuntimeEvent
 from nanocode.tui.session_flow import refresh_tty_session_snapshot
 from nanocode.tui.selection import clear_transcript_selection
-from nanocode.tui.tool_helpers import _summarize_tool_input, _is_file_edit_tool, _extract_path_from_tool_input, _summarize_collapsed_tool_body
+from nanocode.tui.tool_helpers import _summarize_tool_input, _is_file_edit_tool, _extract_path_from_tool_input, _summarize_collapsed_tool_body, _save_transcript
 from nanocode.tui.tool_lifecycle import _push_transcript_entry, _update_tool_entry, _update_transcript_entry, _append_to_transcript_entry, _collapse_tool_entry, _finalize_dangling_running_tools, _get_running_tool_entries, _schedule_tool_auto_collapse
 
 logger = logging.getLogger("nanocode.input_handler")
@@ -297,6 +297,37 @@ def _execute_tool_shortcut(
 
 
 # ---------------------------------------------------------------------------
+# Transcript export
+# ---------------------------------------------------------------------------
+
+
+def _save_transcript_background(
+    args: TtyAppArgs,
+    state: ScreenState,
+    output_path: str,
+    rerender: Callable[[], None],
+) -> None:
+    state.is_busy = True
+    state.status = "Saving transcript..."
+    rerender()
+
+    def _run_export() -> None:
+        try:
+            saved_path = _save_transcript(state, args.cwd, args.permissions, output_path)
+            _push_transcript_entry(state, kind="assistant", body=f"Saved transcript to {saved_path}")
+        except Exception as error:
+            _push_transcript_entry(state, kind="assistant", body=f"Could not save transcript: {error}")
+        finally:
+            state.status = None
+            state.is_busy = False
+            rerender()
+
+    # An outside-workspace destination can require approval from the UI thread.
+    state.tool_thread = threading.Thread(target=_run_export, daemon=True)
+    state.tool_thread.start()
+
+
+# ---------------------------------------------------------------------------
 # Input handling
 # ---------------------------------------------------------------------------
 
@@ -357,6 +388,14 @@ def _handle_input(
         )
         return False
 
+    if input_text == "/transcript-save" or input_text.startswith("/transcript-save "):
+        output_path = input_text[len("/transcript-save"):].strip()
+        if not output_path:
+            _push_transcript_entry(state, kind="assistant", body="Usage: /transcript-save <path>")
+            return False
+        _save_transcript_background(args, state, output_path, rerender)
+        return False
+
     # /tools
     if input_text == "/tools":
         _push_transcript_entry(
@@ -396,6 +435,8 @@ def _handle_input(
         tools=args.tools,
         cwd=args.cwd,
         session=state.session,
+        cost_tracker=state.cost_tracker,
+        context_manager=args.context_manager,
     )
     if local_result is not None:
         _push_transcript_entry(state, kind="assistant", body=local_result)

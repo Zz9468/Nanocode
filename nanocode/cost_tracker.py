@@ -7,6 +7,8 @@ Inspired by Claude Code's cost-tracker.ts implementation.
 from __future__ import annotations
 
 import time
+import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -18,144 +20,7 @@ _DECIMAL_2 = Decimal("2")
 # Pricing (approximate, per 1M tokens)
 # ---------------------------------------------------------------------------
 
-MODEL_PRICING = {
-    # Anthropic models (USD per 1M tokens)
-    "claude-sonnet-4-20250514": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.30,
-        "cache_write": 3.75,
-    },
-    "claude-opus-4-20250514": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.50,
-        "cache_write": 18.75,
-    },
-    "claude-haiku-3-20240307": {
-        "input": 0.25,
-        "output": 1.25,
-        "cache_read": 0.03,
-        "cache_write": 0.30,
-    },
-    # OpenAI models
-    "gpt-4o": {
-        "input": 2.50,
-        "output": 10.0,
-        "cache_read": 1.25,
-        "cache_write": 2.50,
-    },
-    "gpt-4o-mini": {
-        "input": 0.15,
-        "output": 0.60,
-        "cache_read": 0.08,
-        "cache_write": 0.15,
-    },
-    "gpt-4-turbo": {
-        "input": 10.0,
-        "output": 30.0,
-        "cache_read": 5.0,
-        "cache_write": 10.0,
-    },
-    "o1": {
-        "input": 15.0,
-        "output": 60.0,
-        "cache_read": 7.50,
-        "cache_write": 15.0,
-    },
-    "o1-mini": {
-        "input": 3.0,
-        "output": 12.0,
-        "cache_read": 1.50,
-        "cache_write": 3.0,
-    },
-    "o3-mini": {
-        "input": 1.10,
-        "output": 4.40,
-        "cache_read": 0.55,
-        "cache_write": 1.10,
-    },
-    # OpenRouter models (pricing via OpenRouter, approximate)
-    "openrouter/auto": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.30,
-        "cache_write": 3.75,
-    },
-    "anthropic/claude-sonnet-4": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.30,
-        "cache_write": 3.75,
-    },
-    "anthropic/claude-opus-4": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.50,
-        "cache_write": 18.75,
-    },
-    "openai/gpt-4o": {
-        "input": 2.50,
-        "output": 10.0,
-        "cache_read": 1.25,
-        "cache_write": 2.50,
-    },
-    "openai/gpt-4o-mini": {
-        "input": 0.15,
-        "output": 0.60,
-        "cache_read": 0.08,
-        "cache_write": 0.15,
-    },
-    "google/gemini-2.5-pro": {
-        "input": 1.25,
-        "output": 10.0,
-        "cache_read": 0.63,
-        "cache_write": 1.25,
-    },
-    "google/gemini-2.5-flash": {
-        "input": 0.15,
-        "output": 0.60,
-        "cache_read": 0.08,
-        "cache_write": 0.15,
-    },
-    "meta-llama/llama-4-maverick": {
-        "input": 0.20,
-        "output": 0.60,
-        "cache_read": 0.10,
-        "cache_write": 0.20,
-    },
-    "deepseek/deepseek-r1": {
-        "input": 0.55,
-        "output": 2.19,
-        "cache_read": 0.14,
-        "cache_write": 0.55,
-    },
-    "deepseek/deepseek-chat": {
-        "input": 0.14,
-        "output": 0.28,
-        "cache_read": 0.07,
-        "cache_write": 0.14,
-    },
-    "qwen/qwen3-235b-a22b": {
-        "input": 0.22,
-        "output": 0.88,
-        "cache_read": 0.11,
-        "cache_write": 0.22,
-    },
-    "minimax/minimax-m1": {
-        "input": 0.20,
-        "output": 0.80,
-        "cache_read": 0.10,
-        "cache_write": 0.20,
-    },
-    # Default fallback
-    "default": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.30,
-        "cache_write": 3.75,
-    },
-}
+from nanocode.model_policy import MODEL_PRICING, PriceQuote, resolve_model_policy
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +33,7 @@ def calculate_cost(
     output_tokens: int = 0,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
-) -> float:
+) -> float | None:
     """Calculate cost for a single API call.
     
     Args:
@@ -179,19 +44,12 @@ def calculate_cost(
         cache_creation_tokens: Cache write token count
     
     Returns:
-        Cost in USD
+        Legacy USD quote, or None when this model/channel is unpriced
     """
-    pricing = MODEL_PRICING.get(model, MODEL_PRICING["default"])
-    # Pricing is kept as floats for compatibility with the rest of the public
-    # cost-tracking API.  Convert through ``str`` before doing Decimal math so
-    # that successful provider responses cannot fail with Decimal * float.
-    cost = (
-        (Decimal(input_tokens) / _DECIMAL_1M) * Decimal(str(pricing["input"]))
-        + (Decimal(output_tokens) / _DECIMAL_1M) * Decimal(str(pricing["output"]))
-        + (Decimal(cache_read_tokens) / _DECIMAL_1M) * Decimal(str(pricing["cache_read"]))
-        + (Decimal(cache_creation_tokens) / _DECIMAL_1M) * Decimal(str(pricing["cache_write"]))
-    )
-    return float(cost)
+    quote = resolve_model_policy(model).price
+    if quote is None or quote.currency != "USD":
+        return None
+    return float(quote.calculate(input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens))
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +67,10 @@ class ModelUsage:
     call_count: int = 0
     error_count: int = 0
     total_duration_ms: int = 0
+    estimated_calls: int = 0
+    unreported_calls: int = 0
+    unpriced_calls: int = 0
+    amounts: dict[str, Decimal] = field(default_factory=dict)
     
     @property
     def total_tokens(self) -> int:
@@ -243,6 +105,8 @@ class CostTracker:
     
     # Per-model usage
     model_usage: dict[str, ModelUsage] = field(default_factory=dict)
+    totals_by_currency: dict[str, Decimal] = field(default_factory=dict)
+    records: list[dict] = field(default_factory=list)
     
     # Session info
     session_start: float = field(default_factory=time.time)
@@ -256,6 +120,12 @@ class CostTracker:
         duration_ms: int = 0,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        *,
+        usage_source: str = "provider",
+        runtime: dict | None = None,
+        endpoint: str | None = None,
+        request_hash: str = "",
+        raw_usage: dict | None = None,
     ) -> float:
         """Record API usage.
         
@@ -270,17 +140,20 @@ class CostTracker:
         Returns:
             Calculated cost in USD
         """
-        # Get pricing
-        pricing = MODEL_PRICING.get(model, MODEL_PRICING["default"])
-        
-        # Calculate cost
-        cost = (
-            (input_tokens / 1_000_000) * pricing["input"]
-            + (output_tokens / 1_000_000) * pricing["output"]
-            + (cache_read_tokens / 1_000_000) * pricing["cache_read"]
-            + (cache_write_tokens / 1_000_000) * pricing["cache_write"]
-        )
-        
+        policy = resolve_model_policy(model, runtime, endpoint=endpoint)
+        try:
+            quote = policy.price.for_input(input_tokens + cache_read_tokens + cache_write_tokens) if policy.price else None
+        except ValueError:
+            quote = None
+        amount = quote.calculate(input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) if quote and usage_source != "unavailable" else None
+        cost = float(amount) if amount is not None and quote.currency == "USD" else 0.0
+        self.records.append({"id": uuid.uuid4().hex, "recorded_at": time.time(), "model": model,
+            "endpoint": policy.endpoint,
+            "request_hash": request_hash, "usage_source": usage_source, "raw_usage": deepcopy(raw_usage or {}),
+            "tokens": {"input": input_tokens, "output": output_tokens, "cache_read": cache_read_tokens, "cache_write": cache_write_tokens},
+            "pricing": quote.to_dict() if quote else None, "amount": str(amount) if amount is not None else None,
+            "currency": quote.currency if quote else None})
+
         # Update model usage
         if model not in self.model_usage:
             self.model_usage[model] = ModelUsage()
@@ -292,6 +165,12 @@ class CostTracker:
         usage.cache_write_tokens += cache_write_tokens
         usage.cost_usd += cost
         usage.call_count += 1
+        usage.unpriced_calls += int(amount is None)
+        if amount is not None:
+            usage.amounts[quote.currency] = usage.amounts.get(quote.currency, Decimal(0)) + amount
+            self.totals_by_currency[quote.currency] = self.totals_by_currency.get(quote.currency, Decimal(0)) + amount
+        usage.estimated_calls += int(usage_source == "estimated")
+        usage.unreported_calls += int(usage_source == "unavailable")
         usage.total_duration_ms += duration_ms
         
         # Update totals
@@ -346,7 +225,7 @@ class CostTracker:
     
     def get_total_calls(self) -> int:
         """Get total API calls."""
-        return sum(u.call_count for u in self.model_usage.values())
+        return sum(u.call_count + u.error_count for u in self.model_usage.values())
     
     def get_total_errors(self) -> int:
         """Get total API errors."""
@@ -357,75 +236,47 @@ class CostTracker:
     # -----------------------------------------------------------------------
     
     def format_cost_report(self, detailed: bool = False) -> str:
-        """Format cost and usage report.
-        
-        Args:
-            detailed: Include per-model breakdown
-        
-        Returns:
-            Formatted report string
-        """
-        lines = [
-            "Cost & Usage Report",
-            "=" * 60,
-            "",
-            "Summary:",
-            f"  Total cost: ${self.total_cost_usd:.4f}",
-            f"  Total API calls: {self.get_total_calls()}",
-            f"  Total API errors: {self.get_total_errors()}",
+        def amounts(values):
+            return ", ".join(f"{currency} {amount:.6f}" for currency, amount in sorted(values.items())) or "none priced"
+        unpriced = sum(u.unpriced_calls for u in self.model_usage.values())
+        lines = ["Cost & Usage Report", "=" * 60,
+            "Scope: current process; restored sessions start new counters.",
+            "Cost: versioned local tariff estimate; currency totals are never combined.",
+            "Input excludes cache read/write; total tokens include each exactly once.",
+            "Internal retries and auxiliary model requests may be excluded.", "", "Summary:",
+            f"  Total cost: {amounts(self.totals_by_currency)}",
+            f"  Unpriced responses: {unpriced}",
+            f"  Total API calls: {self.get_total_calls()}", f"  Total API errors: {self.get_total_errors()}",
             f"  Total tokens: {self.get_total_tokens():,}",
-            f"  Total API duration: {self.total_api_duration_ms / 1000:.1f}s",
-            "",
-            "Code Changes:",
-            f"  Lines added: {self.total_lines_added:,}",
-            f"  Lines removed: {self.total_lines_removed:,}",
-            f"  Total modified: {self.total_lines_modified:,}",
-        ]
-        
-        if detailed and self.model_usage:
-            lines.extend([
-                "",
-                "Per-Model Breakdown:",
-                "-" * 60,
-            ])
-            
+            f"  Estimated token usage: {sum(u.estimated_calls for u in self.model_usage.values())} response(s)",
+            f"  Without token usage: {sum(u.unreported_calls for u in self.model_usage.values())}",
+            f"  Total API duration: {self.total_api_duration_ms / 1000:.1f}s", "", "Code Changes (recorded only):",
+            f"  Lines added: {self.total_lines_added:,}", f"  Lines removed: {self.total_lines_removed:,}",
+            f"  Total modified: {self.total_lines_modified:,}"]
+        if detailed:
+            lines += ["", "Per-Model Breakdown:", "-" * 60]
             for model, usage in self.model_usage.items():
-                lines.extend([
-                    "",
-                    f"  {model}:",
-                    f"    Cost: ${usage.cost_usd:.4f}",
-                    f"    Calls: {usage.call_count}",
-                    f"    Errors: {usage.error_count}",
-                    f"    Tokens: {usage.total_tokens:,}",
-                    f"      Input: {usage.input_tokens:,}",
-                    f"      Output: {usage.output_tokens:,}",
-                    f"      Cache read: {usage.cache_read_tokens:,}",
-                    f"      Cache write: {usage.cache_write_tokens:,}",
-                    f"    Avg duration: {usage.avg_duration_ms:.0f}ms",
-                ])
-        
-        # Session duration
-        session_duration = time.time() - self.session_start
-        lines.extend([
-            "",
-            "-" * 60,
-            f"Session duration: {session_duration / 60:.1f} minutes",
-            f"Cost per minute: ${self.total_cost_usd / max(1, session_duration / 60):.4f}",
-        ])
-        
+                quotes = [r for r in self.records if r["model"] == model]
+                price = quotes[-1]["pricing"] if quotes else None
+                versions = sorted({r["pricing"]["version"] for r in quotes if r["pricing"]})
+                lines += ["", f"  {model}:", f"    Cost: {amounts(usage.amounts)}",
+                    f"    Pricing: {price['version'] if price else 'unpriced (model/channel price unavailable)'}",
+                    f"    Price versions recorded: {', '.join(versions) or 'none'}",
+                    f"    Currency: {price['currency'] if price else 'unknown'}",
+                    f"    Source: {price['source_url'] if price else 'none'}",
+                    f"    Verified: {price['verified_at'] if price else 'none'}",
+                    f"    Calls: {usage.call_count}", f"    Errors: {usage.error_count}",
+                    f"    Tokens: {usage.total_tokens:,}", f"      Input: {usage.input_tokens:,}",
+                    f"      Output: {usage.output_tokens:,}", f"      Cache read: {usage.cache_read_tokens:,}",
+                    f"      Cache write: {usage.cache_write_tokens:,}", f"    Avg duration: {usage.avg_duration_ms:.0f}ms"]
+        minutes = (time.time() - self.session_start) / 60
+        rates = {currency: amount / Decimal(str(max(1, minutes))) for currency, amount in self.totals_by_currency.items()}
+        lines += ["", "-" * 60, f"Session duration: {minutes:.1f} minutes", f"Cost per minute: {amounts(rates)}"]
         return "\n".join(lines)
-    
+
     def format_short_summary(self) -> str:
-        """Format a short summary for status bar.
-        
-        Returns:
-            Short summary string
-        """
-        if self.total_cost_usd == 0:
-            return "Cost: $0.0000"
-        
-        return (
-            f"Cost: ${self.total_cost_usd:.4f} | "
-            f"Tokens: {self.get_total_tokens():,} | "
-            f"Calls: {self.get_total_calls()}"
-        )
+        parts = [f"{currency} {amount:.6f}" for currency, amount in sorted(self.totals_by_currency.items())]
+        unknown = sum(u.unpriced_calls for u in self.model_usage.values())
+        if unknown:
+            parts.append(f"{unknown} unpriced")
+        return "Cost: " + (", ".join(parts) if parts else "no usage")

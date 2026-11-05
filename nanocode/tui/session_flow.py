@@ -4,7 +4,6 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from nanocode.cost_tracker import CostTracker
 from nanocode.history import load_history_entries
 from nanocode.permissions import PermissionManager
 from nanocode.session import (
@@ -99,8 +98,8 @@ def build_tty_runtime_state(
             "workspace": cwd,
             "model": runtime.get("model", "unknown") if runtime else "unknown",
         }),
-        cost_tracker=CostTracker(),
     )
+    state.cost_tracker = state.app_state.get_state().cost_tracker
     state.history_index = len(state.history)
 
     if session.messages:
@@ -189,6 +188,10 @@ def refresh_tty_session_snapshot(args: TtyAppArgs, state: ScreenState) -> None:
         state.session.readiness_report = dict(
             product_snapshot.get("readiness_report", {})
         )
+    if getattr(state, "cost_tracker", None) is not None:
+        state.session.cost_records = list(getattr(state.session, "cost_records", []))
+        known = {r["id"] for r in state.session.cost_records}
+        state.session.cost_records.extend(r for r in state.cost_tracker.records if r["id"] not in known)
     if hasattr(state.session, "update_metadata"):
         state.session.update_metadata()
 

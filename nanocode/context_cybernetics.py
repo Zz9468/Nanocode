@@ -680,7 +680,7 @@ class ContextCyberneticsOrchestrator:
         self._last_avg_latency = avg_latency
 
         estimate_fn = self.compactor._estimate
-        total_tokens = sum(estimate_fn(m) for m in messages)
+        total_tokens = self.compactor.count_tokens(messages)
         context_window = self.compactor._context_window
 
         reading = self.sensor.measure(
@@ -734,7 +734,7 @@ class ContextCyberneticsOrchestrator:
                 final_messages = result.messages
 
         usage_after = (
-            sum(estimate_fn(m) for m in final_messages) / max(context_window, 1)
+            self.compactor.count_tokens(final_messages) / max(context_window, 1)
             if result and result.effective else reading.usage_ratio
         )
         self.feedback.record(action, result or CompactionResult(

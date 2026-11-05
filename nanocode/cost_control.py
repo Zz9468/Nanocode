@@ -334,8 +334,11 @@ class CostControlLoop:
         ki: float = 0.08,
         kd: float = 0.2,
         enabled: bool = True,
+        currency: str = "USD",
     ):
         self.enabled = enabled
+        self.currency = currency
+        self.disabled_reason = ""
         self.sensor = CostRateSensor()
         self.pid = BudgetPIDController(
             kp=kp, ki=ki, kd=kd,
@@ -354,6 +357,12 @@ class CostControlLoop:
     @property
     def last_reading(self) -> CostRateReading | None:
         return self._last_reading
+
+    def run_in_currency(self, *, amount: float, currency: str, total_tokens: int, total_calls: int, session_start=None):
+        if currency != self.currency:
+            raise ValueError("Cost budget and ledger currency must match")
+        # cost_usd is the legacy sensor argument; the loop's currency is explicit.
+        return self.run(cost_usd=amount, total_tokens=total_tokens, total_calls=total_calls, session_start=session_start)
 
     def run(
         self,
@@ -424,6 +433,8 @@ class CostControlLoop:
         reading = sensor_recent[0] if sensor_recent else None
         return {
             "control_enabled": self.enabled,
+            "currency": self.currency,
+            "disabled_reason": self.disabled_reason,
             "cycles_executed": self._cycle_count,
             "sensor": {
                 "cost_per_min": round(reading.cost_per_minute, 4) if reading else 0,

@@ -734,6 +734,37 @@ def _apply_control_signal(
     return max_steps
 
 
+def _update_cost_control(controller, store) -> None:
+    if store is None:
+        return
+    tracker = store.get_state().cost_tracker
+    if any(u.unpriced_calls or u.unreported_calls for u in tracker.model_usage.values()):
+        controller.enabled = False
+        controller.disabled_reason = "Some responses have unknown price or token usage"
+        return
+    if any(currency != controller.currency for currency in tracker.totals_by_currency):
+        controller.enabled = False
+        controller.disabled_reason = "Ledger and budget currencies differ; no implicit exchange rate"
+        return
+    amount = tracker.totals_by_currency.get(controller.currency, 0)
+    controller.run_in_currency(amount=float(amount), currency=controller.currency,
+        total_tokens=tracker.get_total_tokens(), total_calls=tracker.get_total_calls(), session_start=tracker.session_start)
+
+
+def _prepare_tool_result_budget(
+    messages: list[ChatMessage],
+    compactor: ContextCompactor | None,
+    context_manager: ContextManager | None = None,
+) -> tuple[list[ChatMessage], int]:
+    """Bound replayed tool output independently of pressure-triggered compaction."""
+    if compactor is None:
+        return messages, 0
+    prepared, chars_removed = compactor.tool_budget.check_and_replace(messages)
+    if context_manager is not None:
+        context_manager.messages = prepared
+    return prepared, chars_removed
+
+
 def run_agent_turn(
     *,
     model: ModelAdapter,
@@ -771,6 +802,12 @@ def run_agent_turn(
         query = next((message.get("content", "") for message in reversed(messages) if message.get("role") == "user"), "")
         current_messages = memory_pipeline.inject(query, None, current_messages)
     runtime = runtime or {}
+    if getattr(model, "token_accounting", None) is not None:
+        context_manager = context_manager or ContextManager(model=str(runtime.get("model", "default")))
+        context_manager.configure_accounting(model)
+        if store is None:
+            from nanocode.state import create_app_store
+            store = create_app_store({"model": str(runtime.get("model", "default"))})
     configured_runtime_model = (
         str(runtime.get("configuredModel", "")).strip()
         or str(runtime.get("model", "")).strip()
@@ -948,7 +985,7 @@ def run_agent_turn(
                     recent_failures=0,
                     current_model=model.model_id if hasattr(model, 'model_id') else "",
                 )
-                model_decision = model_selection_ctrl.decide(model_signal)
+                model_decision = model_selection_ctrl.decide(model_signal, runtime=runtime)
                 logger.info(
                     "ModelSelectionController: model=%s score=%.2f effort=%s reasons=%s",
                     model_decision.model, model_decision.score,
@@ -1050,10 +1087,11 @@ def run_agent_turn(
                 except Exception:
                     pass
             context_compactor = ContextCompactor(
-                context_window=context_manager.context_window,
+                context_window=context_manager.effective_input,
                 workspace=cwd,
                 memory_manager=memory_mgr,
                 estimate_fn=estimate_message_tokens,
+                total_count_fn=context_manager.count_tokens,
                 config=compact_config,
             )
             context_cybernetics = ContextCyberneticsOrchestrator(
@@ -1088,11 +1126,18 @@ def run_agent_turn(
         compaction_breaker = CompactionCircuitBreaker()
         logger.info("Micro-compactor + circuit breaker initialized for layered context defense")
 
+        # Currency-aware control uses the same ledger as /cost.
+        active_price = getattr(getattr(context_manager, "accounting", None), "policy", None)
+        active_price = active_price.price if active_price else None
+        cost_budget = runtime.get("costBudget") or {}
+        budget_currency = str(cost_budget.get("currency") or (active_price.currency if active_price else "USD"))
+        budget_target = float(cost_budget.get("perMinute", 0.50))
         # 初始化成本控制闭环 (CostTracker → PID → ToolResultBudgetManager)
         cost_control = orch.cost_control if orch else None
-        if cost_control is None:
+        if cost_control is None or getattr(cost_control, "currency", "USD") != budget_currency:
             cost_control = CostControlLoop(
-                target_cost_per_min=0.50,
+                target_cost_per_min=budget_target,
+                currency=budget_currency,
                 kp=1.5, ki=0.08, kd=0.2,
                 enabled=True,
             )
@@ -1103,6 +1148,7 @@ def run_agent_turn(
     # 检查上下文状态 + 运行 Claude Code-style 预请求优化管线
     if context_manager:
         context_manager.messages = current_messages
+        context_manager.measure(current_messages, allow_remote=True)
         stats = context_manager.get_stats()
         logger.info("Context: %d tokens (%.0f%%), %d messages",
                    stats.total_tokens, stats.usage_percentage, stats.messages_count)
@@ -1121,12 +1167,8 @@ def run_agent_turn(
         # 运行控制论闭环优化管线 (Sense → Predict → Control → Act → Learn)
         if context_cybernetics:
             if cost_control:
-                est_cost = stats.total_tokens * 0.000015
-                adj = cost_control.run(
-                    cost_usd=est_cost,
-                    total_tokens=stats.total_tokens,
-                    total_calls=max(turn_state.step, 1),
-                )
+                _update_cost_control(cost_control, store)
+                adj = cost_control.last_adjustment
                 if context_compactor and hasattr(context_compactor, '_tool_budget') and context_compactor._tool_budget:
                     cost_control.apply_to_budget_manager(context_compactor._tool_budget)
                 elif adj and adj.budget_multiplier < 0.8:
@@ -1348,17 +1390,43 @@ def run_agent_turn(
 
             next_step: AgentStep
             try:
+                current_messages, budget_chars_removed = _prepare_tool_result_budget(
+                    current_messages, context_compactor, context_manager,
+                )
+            except OSError as error:
+                # Do not fall through to a model call with the oversized body,
+                # or misclassify a local persistence error as a provider failure.
+                blocking_msg = f"Unable to persist oversized tool output: {error}"
+                turn_state.set_stop_reason("blocked")
+                emit_runtime_event(
+                    category="stop", message=blocking_msg,
+                    stop_reason="blocked", emit_progress=False,
+                )
+                if on_assistant_message:
+                    on_assistant_message(blocking_msg)
+                current_messages.append({"role": "assistant", "content": blocking_msg})
+                if metrics_collector:
+                    metrics_collector.end_turn(total_tokens=0)
+                return current_messages
+            if budget_chars_removed > 0:
+                emit_runtime_event(
+                    category="compaction",
+                    message=(
+                        "Tool-result budget: replaced oversized output with disk previews "
+                        f"({budget_chars_removed} characters removed)."
+                    ),
+                )
+            try:
                 # ── Layer 0: Preemptive context guard (CC-style blocking limit)
                 if context_manager:
+                    context_manager.messages = current_messages
+                    measurement = context_manager.measure(current_messages, allow_remote=True)
                     cm_stats = context_manager.get_stats()
-                    if _is_at_blocking_limit(
-                        cm_stats.total_tokens,
-                        context_manager.context_window,
-                    ):
+                    if measurement.input_tokens >= context_manager.effective_input:
                         blocking_msg = (
                             f"Context near limit ({cm_stats.total_tokens} / "
-                            f"{context_manager.context_window} tokens). "
-                            "Use /compact manually, or reduce task scope."
+                            f"{context_manager.effective_input} effective input tokens). "
+                            "Reduce task scope or start a new session; output space is reserved."
                         )
                         logger.warning("Preemptive guard: %s", blocking_msg)
                         emit_runtime_event(
@@ -1380,6 +1448,8 @@ def run_agent_turn(
                     on_thinking_chunk=on_thinking_chunk,
                     store=store,
                 )
+                if cost_control is not None:
+                    _update_cost_control(cost_control, store)
             except KeyboardInterrupt:
                 raise  # Let Ctrl-C propagate
             except ConnectionError as error:

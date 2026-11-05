@@ -92,6 +92,7 @@ class SessionData:
     delegation_status: dict[str, Any] = field(default_factory=dict)
     extension_manifests: list[dict[str, Any]] = field(default_factory=list)
     readiness_report: dict[str, Any] = field(default_factory=dict)
+    cost_records: list[dict[str, Any]] = field(default_factory=list)
     checkpoints: list[FileCheckpoint] = field(default_factory=list)
     metadata: SessionMetadata = field(default=None)
     
@@ -99,6 +100,7 @@ class SessionData:
     _last_saved_msg_count: int = field(default=0, repr=False)
     _last_saved_transcript_count: int = field(default=0, repr=False)
     _last_saved_checkpoint_count: int = field(default=0, repr=False)
+    _last_saved_cost_count: int = field(default=0, repr=False)
     _delta_save_count: int = field(default=0, repr=False)
     _last_full_save_hash: str = field(default="", repr=False)
 
@@ -405,8 +407,9 @@ def _save_delta(session: SessionData) -> None:
     new_messages = session.messages[session._last_saved_msg_count:]
     new_transcripts = session.transcript_entries[session._last_saved_transcript_count:]
     new_checkpoints = session.checkpoints[session._last_saved_checkpoint_count:]
+    new_cost_records = session.cost_records[session._last_saved_cost_count:]
     
-    if not new_messages and not new_transcripts and not new_checkpoints:
+    if not new_messages and not new_transcripts and not new_checkpoints and not new_cost_records:
         return
     
     # Create delta entry
@@ -415,6 +418,8 @@ def _save_delta(session: SessionData) -> None:
         "msg_offset": session._last_saved_msg_count,
         "transcript_offset": session._last_saved_transcript_count,
     }
+    if new_cost_records:
+        delta_data["cost_records"] = new_cost_records
     if new_messages:
         delta_data["messages"] = new_messages
     if new_transcripts:
@@ -435,6 +440,7 @@ def _save_delta(session: SessionData) -> None:
     session._last_saved_msg_count = len(session.messages)
     session._last_saved_transcript_count = len(session.transcript_entries)
     session._last_saved_checkpoint_count = len(session.checkpoints)
+    session._last_saved_cost_count = len(session.cost_records)
     session._delta_save_count += 1
 
 
@@ -512,6 +518,7 @@ def save_session(session: SessionData, force_full: bool = False) -> None:
             "delegation_status": session.delegation_status,
             "extension_manifests": session.extension_manifests,
             "readiness_report": session.readiness_report,
+            "cost_records": session.cost_records,
             "checkpoints": [_serialize_checkpoint(cp) for cp in session.checkpoints],
             "metadata": {
                 "session_id": session.metadata.session_id,
@@ -539,6 +546,7 @@ def save_session(session: SessionData, force_full: bool = False) -> None:
         session._last_saved_msg_count = len(session.messages)
         session._last_saved_transcript_count = len(session.transcript_entries)
         session._last_saved_checkpoint_count = len(session.checkpoints)
+        session._last_saved_cost_count = len(session.cost_records)
         session._last_full_save_hash = session._compute_content_hash()
         
         # Consolidate and clean up delta files
@@ -588,6 +596,7 @@ def load_session(session_id: str) -> SessionData | None:
             delegation_status=data.get("delegation_status", {}),
             extension_manifests=data.get("extension_manifests", []),
             readiness_report=data.get("readiness_report", {}),
+            cost_records=data.get("cost_records", []),
             checkpoints=[
                 _deserialize_checkpoint(item)
                 for item in data.get("checkpoints", [])
@@ -638,6 +647,8 @@ def load_session(session_id: str) -> SessionData | None:
                             overlap = len(session.checkpoints) - c_offset
                             session.checkpoints.extend(parsed[overlap:])
                     
+                    existing_cost_ids = {r["id"] for r in session.cost_records}
+                    session.cost_records.extend(r for r in delta.get("cost_records", []) if r["id"] not in existing_cost_ids)
                     session._delta_save_count += 1
                 except (json.JSONDecodeError, KeyError, TypeError):
                     # Skip corrupt delta files
@@ -647,6 +658,7 @@ def load_session(session_id: str) -> SessionData | None:
         session._last_saved_msg_count = len(session.messages)
         session._last_saved_transcript_count = len(session.transcript_entries)
         session._last_saved_checkpoint_count = len(session.checkpoints)
+        session._last_saved_cost_count = len(session.cost_records)
         session._last_full_save_hash = session._compute_content_hash()
         
         return session

@@ -77,6 +77,61 @@ def test_clear_command_is_handled_instead_of_suggesting_itself(local_runtime):
     assert "cleared" in body.lower()
 
 
+@pytest.mark.parametrize("command", ["/cost", "/cost --detailed"])
+def test_cost_command_reports_live_usage_without_changing_model_messages(local_runtime, command):
+    from nanocode.cost_tracker import CostTracker
+
+    args, state = local_runtime
+    state.cost_tracker = CostTracker()
+    state.cost_tracker.add_usage("lesson-model", 1000, 500, duration_ms=250)
+    original_messages = list(args.messages)
+
+    submit(state, args, command)
+
+    body = state.transcript[-1].body
+    assert "Cost & Usage Report" in body
+    assert "Total API calls: 1" in body
+    assert "Total tokens: 1,500" in body
+    assert "Unknown command" not in body
+    assert args.messages == original_messages
+    if command.endswith("--detailed"):
+        assert "lesson-model" in body
+        assert "Input: 1,000" in body
+        assert "Output: 500" in body
+
+
+def test_cost_without_live_tracker_does_not_invent_zero_usage(local_runtime):
+    args, state = local_runtime
+    submit(state, args, "/cost")
+    assert "not available" in state.transcript[-1].body.lower()
+    assert "Total cost: $0.0000" not in state.transcript[-1].body
+
+
+def test_cost_rejects_unknown_arguments(local_runtime):
+    args, state = local_runtime
+    submit(state, args, "/cost --unknown")
+    assert state.transcript[-1].body == "Usage: /cost [--detailed]"
+
+
+def test_cost_command_uses_same_tracker_as_live_provider_store(local_runtime):
+    from nanocode.state import record_api_usage
+    from nanocode.tui.session_flow import build_tty_runtime_state
+
+    initial_args, initial_state = local_runtime
+    args, state = build_tty_runtime_state(
+        initial_args.runtime, initial_args.tools, initial_args.model,
+        initial_args.messages, initial_args.cwd, initial_args.permissions,
+        initial_state.session,
+    )
+    state.app_state.set_state(record_api_usage("lesson-model", 42, 8))
+    submit(state, args, "/cost --detailed")
+
+    assert state.cost_tracker is state.app_state.get_state().cost_tracker
+    assert "Total API calls: 1" in state.transcript[-1].body
+    assert "Total tokens: 50" in state.transcript[-1].body
+    assert "Input: 42" in state.transcript[-1].body
+
+
 @pytest.mark.parametrize("operation", ["edit", "command", "external_read"])
 @pytest.mark.parametrize("allow", [True, False], ids=["allow", "deny"])
 def test_tool_shortcut_keeps_input_responsive_during_real_approval(

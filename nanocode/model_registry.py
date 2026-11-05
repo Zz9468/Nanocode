@@ -16,9 +16,10 @@ import os
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
+from nanocode.model_policy import resolve_model_policy
 
 
 
@@ -49,8 +50,10 @@ class ModelInfo:
     supports_streaming: bool = True
     supports_tools: bool = True
     supports_vision: bool = False
-    pricing_input: float = 3.0        # USD per 1M input tokens
-    pricing_output: float = 15.0      # USD per 1M output tokens
+    pricing_input: float | None = None        # per 1M input tokens, in pricing_currency
+    pricing_output: float | None = None      # per 1M output tokens, in pricing_currency
+
+    pricing_currency: str | None = None
 
     def __post_init__(self):
         if not self.display_name:
@@ -102,9 +105,9 @@ class ModelSelectionDecision:
 class ModelSelectionController:
     """Risk/cost adaptive model recommendation controller."""
 
-    def decide(self, signal: ModelSelectionSignal) -> ModelSelectionDecision:
+    def decide(self, signal: ModelSelectionSignal, runtime: dict | None = None) -> ModelSelectionDecision:
         candidates = [
-            info for info in list_available_models()
+            info for info in list_available_models(runtime=runtime)
             if info.supports_tools or not signal.requires_tools
         ]
         if not candidates:
@@ -136,10 +139,14 @@ class ModelSelectionController:
             target_power = max(0.20, target_power - 0.15)
             reasons.append("high latency pressure")
 
+        primary_quote = resolve_model_policy(str((runtime or {}).get("model", signal.current_model)), runtime).price
+        budget_currency = str(((runtime or {}).get("costBudget") or {}).get("currency") or (primary_quote.currency if primary_quote else "USD"))
+        comparable = [(m.pricing_input + m.pricing_output) / 2 for m in candidates if m.pricing_currency == budget_currency and m.pricing_input is not None]
+        cost_scale = max(comparable, default=1.0) or 1.0
         scored: list[tuple[float, ModelInfo, list[str]]] = []
         for info in candidates:
             power = self._model_power(info)
-            cost = self._model_cost(info)
+            cost = self._model_cost(info, cost_scale) if info.pricing_currency == budget_currency else 1.0
             latency = self._latency_proxy(info)
             context_fit = 1.0 if not signal.requires_long_context else min(1.0, info.context_window / 200_000)
 
@@ -182,9 +189,11 @@ class ModelSelectionController:
             return 0.35
         return 0.55
 
-    def _model_cost(self, info: ModelInfo) -> float:
+    def _model_cost(self, info: ModelInfo, scale: float = 45.0) -> float:
+        if info.pricing_input is None or info.pricing_output is None:
+            return 1.0
         blended = (info.pricing_input + info.pricing_output) / 2
-        return min(1.0, blended / 45.0)
+        return min(1.0, blended / scale)
 
     def _latency_proxy(self, info: ModelInfo) -> float:
         power = self._model_power(info)
@@ -214,6 +223,11 @@ BUILTIN_MODELS: dict[str, ModelInfo] = {}
 _OPENAI_EXPOSED_MODELS_CACHE: dict[tuple[str, str], tuple[str, ...]] = {}
 
 def _register(info: ModelInfo) -> None:
+    policy = resolve_model_policy(info.name)
+    quote = policy.price
+    info = replace(info, context_window=policy.context_window, max_output_tokens=policy.max_output_tokens,
+        pricing_input=float(quote.input) if quote else None, pricing_output=float(quote.output) if quote else None,
+        pricing_currency=quote.currency if quote else None)
     BUILTIN_MODELS[info.name] = info
     # Also register under common aliases
     for alias in _aliases(info.name):
@@ -372,83 +386,44 @@ def model_is_exposed_via_openai_runtime(
 
 
 # --- Anthropic models ---
-_register(ModelInfo("claude-sonnet-4-20250514", Provider.ANTHROPIC,
-    context_window=200_000, max_output_tokens=16_384,
-    pricing_input=3.0, pricing_output=15.0))
-_register(ModelInfo("claude-opus-4-20250514", Provider.ANTHROPIC,
-    context_window=200_000, max_output_tokens=16_384,
-    pricing_input=15.0, pricing_output=75.0))
-_register(ModelInfo("claude-haiku-3-20240307", Provider.ANTHROPIC,
-    context_window=100_000, max_output_tokens=4_096,
-    pricing_input=0.25, pricing_output=1.25))
+_register(ModelInfo("claude-sonnet-4-20250514", Provider.ANTHROPIC))
+_register(ModelInfo("claude-opus-4-20250514", Provider.ANTHROPIC))
+_register(ModelInfo("claude-haiku-3-20240307", Provider.ANTHROPIC))
 
 # --- OpenAI models ---
-_register(ModelInfo("gpt-4o", Provider.OPENAI,
-    context_window=128_000, max_output_tokens=16_384,
-    pricing_input=2.50, pricing_output=10.0))
-_register(ModelInfo("gpt-4o-mini", Provider.OPENAI,
-    context_window=128_000, max_output_tokens=16_384,
-    pricing_input=0.15, pricing_output=0.60))
-_register(ModelInfo("gpt-4-turbo", Provider.OPENAI,
-    context_window=128_000, max_output_tokens=4_096,
-    pricing_input=10.0, pricing_output=30.0))
-_register(ModelInfo("gpt-5.5", Provider.OPENAI,
-    context_window=128_000, max_output_tokens=16_384,
-    pricing_input=3.0, pricing_output=15.0))
-_register(ModelInfo("gpt5.5", Provider.OPENAI,
-    context_window=128_000, max_output_tokens=16_384,
-    pricing_input=3.0, pricing_output=15.0))
+_register(ModelInfo("gpt-4o", Provider.OPENAI))
+_register(ModelInfo("gpt-4o-mini", Provider.OPENAI))
+_register(ModelInfo("gpt-4-turbo", Provider.OPENAI))
+_register(ModelInfo("gpt-5.5", Provider.OPENAI))
+_register(ModelInfo("gpt5.5", Provider.OPENAI))
 _register(ModelInfo("o1", Provider.OPENAI,
-    context_window=200_000, max_output_tokens=100_000,
-    pricing_input=15.0, pricing_output=60.0, supports_tools=False))
+
+    supports_tools=False))
 _register(ModelInfo("o1-mini", Provider.OPENAI,
-    context_window=128_000, max_output_tokens=65_536,
-    pricing_input=3.0, pricing_output=12.0, supports_tools=False))
-_register(ModelInfo("o3-mini", Provider.OPENAI,
-    context_window=200_000, max_output_tokens=100_000,
-    pricing_input=1.10, pricing_output=4.40))
+
+    supports_tools=False))
+_register(ModelInfo("o3-mini", Provider.OPENAI))
 
 # --- OpenRouter popular models ---
 _register(ModelInfo("openrouter/auto", Provider.OPENROUTER,
-    display_name="OpenRouter Auto", context_window=200_000,
-    pricing_input=3.0, pricing_output=15.0))
-_register(ModelInfo("anthropic/claude-sonnet-4", Provider.OPENROUTER,
-    context_window=200_000, max_output_tokens=16_384,
-    pricing_input=3.0, pricing_output=15.0))
-_register(ModelInfo("anthropic/claude-opus-4", Provider.OPENROUTER,
-    context_window=200_000, max_output_tokens=16_384,
-    pricing_input=15.0, pricing_output=75.0))
-_register(ModelInfo("openai/gpt-4o", Provider.OPENROUTER,
-    context_window=128_000, max_output_tokens=16_384,
-    pricing_input=2.50, pricing_output=10.0))
-_register(ModelInfo("openai/gpt-4o-mini", Provider.OPENROUTER,
-    context_window=128_000, max_output_tokens=16_384,
-    pricing_input=0.15, pricing_output=0.60))
+    display_name="OpenRouter Auto", ))
+_register(ModelInfo("anthropic/claude-sonnet-4", Provider.OPENROUTER))
+_register(ModelInfo("anthropic/claude-opus-4", Provider.OPENROUTER))
+_register(ModelInfo("openai/gpt-4o", Provider.OPENROUTER))
+_register(ModelInfo("openai/gpt-4o-mini", Provider.OPENROUTER))
 _register(ModelInfo("google/gemini-2.5-pro", Provider.OPENROUTER,
-    context_window=1_000_000, max_output_tokens=8_192,
-    pricing_input=1.25, pricing_output=10.0, supports_vision=True))
+
+    supports_vision=True))
 _register(ModelInfo("google/gemini-2.5-flash", Provider.OPENROUTER,
-    context_window=1_000_000, max_output_tokens=8_192,
-    pricing_input=0.15, pricing_output=0.60, supports_vision=True))
-_register(ModelInfo("meta-llama/llama-4-maverick", Provider.OPENROUTER,
-    context_window=1_000_000, max_output_tokens=8_192,
-    pricing_input=0.20, pricing_output=0.60))
-_register(ModelInfo("deepseek/deepseek-r1", Provider.OPENROUTER,
-    context_window=128_000, max_output_tokens=8_192,
-    pricing_input=0.55, pricing_output=2.19))
-_register(ModelInfo("deepseek/deepseek-chat", Provider.OPENROUTER,
-    context_window=128_000, max_output_tokens=8_192,
-    pricing_input=0.14, pricing_output=0.28))
+
+    supports_vision=True))
+_register(ModelInfo("meta-llama/llama-4-maverick", Provider.OPENROUTER))
+_register(ModelInfo("deepseek/deepseek-r1", Provider.OPENROUTER))
+_register(ModelInfo("deepseek/deepseek-chat", Provider.OPENROUTER))
 _register(ModelInfo("deepseek-v4-pro[1m]", Provider.ANTHROPIC,
-    display_name="DeepSeek V4 Pro",
-    context_window=128_000, max_output_tokens=8_192,
-    pricing_input=0.10, pricing_output=0.40))
-_register(ModelInfo("qwen/qwen3-235b-a22b", Provider.OPENROUTER,
-    context_window=128_000, max_output_tokens=8_192,
-    pricing_input=0.22, pricing_output=0.88))
-_register(ModelInfo("minimax/minimax-m1", Provider.OPENROUTER,
-    context_window=1_000_000, max_output_tokens=8_192,
-    pricing_input=0.20, pricing_output=0.80))
+    display_name="DeepSeek V4 Pro"))
+_register(ModelInfo("qwen/qwen3-235b-a22b", Provider.OPENROUTER))
+_register(ModelInfo("minimax/minimax-m1", Provider.OPENROUTER))
 
 
 # ---------------------------------------------------------------------------
@@ -540,26 +515,16 @@ def detect_provider(
     return Provider.ANTHROPIC
 
 
-def resolve_model_info(model: str, provider: Provider | None = None) -> ModelInfo:
+def resolve_model_info(model: str, provider: Provider | None = None, runtime: dict | None = None) -> ModelInfo:
     """Resolve a model name to ModelInfo, with fallback for unknown models."""
-    # Check built-in catalog first
-    if model in BUILTIN_MODELS:
-        return BUILTIN_MODELS[model]
-
-    # Try case-insensitive lookup
-    for key, info in BUILTIN_MODELS.items():
-        if key.lower() == model.lower():
-            return info
-
-    # Unknown model: generate a best-effort ModelInfo
-    resolved_provider = provider or detect_provider(model)
-    return ModelInfo(
-        name=model,
-        provider=resolved_provider,
-        context_window=128_000,
-        pricing_input=3.0,
-        pricing_output=15.0,
-    )
+    info = next((value for key, value in BUILTIN_MODELS.items() if key.lower() == model.lower()), None)
+    if info is None:
+        info = ModelInfo(name=model, provider=provider or detect_provider(model, runtime, probe_openai_models=False))
+    policy = resolve_model_policy(model, runtime)
+    quote = policy.price
+    return replace(info, context_window=policy.context_window, max_output_tokens=policy.max_output_tokens,
+        pricing_input=float(quote.input) if quote else None, pricing_output=float(quote.output) if quote else None,
+        pricing_currency=quote.currency if quote else None)
 
 
 _NON_AGENT_MODEL_MARKERS = (
@@ -797,7 +762,7 @@ class ModelSwitch:
     message: str
 
 
-def list_available_models(provider: Provider | None = None) -> list[ModelInfo]:
+def list_available_models(provider: Provider | None = None, runtime: dict | None = None) -> list[ModelInfo]:
     """List all available models, optionally filtered by provider."""
     models = list(BUILTIN_MODELS.values())
     # Deduplicate (aliases point to same ModelInfo)
@@ -806,10 +771,12 @@ def list_available_models(provider: Provider | None = None) -> list[ModelInfo]:
     for m in models:
         if m.name not in seen:
             seen.add(m.name)
-            unique.append(m)
+            unique.append(resolve_model_info(m.name, m.provider, runtime))
+    if runtime and runtime.get("model") and runtime["model"] not in seen:
+        unique.append(resolve_model_info(str(runtime["model"]), runtime=runtime))
     if provider:
         unique = [m for m in unique if m.provider == provider]
-    return sorted(unique, key=lambda m: (m.provider.value, m.pricing_input))
+    return sorted(unique, key=lambda m: (m.provider.value, m.pricing_currency or "", m.pricing_input if m.pricing_input is not None else float("inf")))
 
 
 def format_model_list(provider: Provider | None = None) -> str:
@@ -827,7 +794,7 @@ def format_model_list(provider: Provider | None = None) -> str:
             lines.append(f"  [{current_provider.value.upper()}]")
             lines.append(f"  {'-' * 50}")
 
-        pricing = f"${m.pricing_input:.2f}/${m.pricing_output:.2f}"
+        pricing = f"{m.pricing_currency} {m.pricing_input:.2f}/{m.pricing_output:.2f}" if m.pricing_input is not None else "unpriced"
         ctx = f"{m.context_window // 1000}K"
         tools_flag = "tools" if m.supports_tools else "no-tools"
         lines.append(f"    {m.name:<45} {pricing:<14} {ctx:<8} {tools_flag}")
@@ -846,7 +813,7 @@ def format_model_list(provider: Provider | None = None) -> str:
 def format_model_status(model: str, runtime: dict[str, Any] | None = None) -> str:
     """Format current model status."""
     provider = detect_provider(model, runtime)
-    info = resolve_model_info(model, provider)
+    info = resolve_model_info(model, provider, runtime)
     pconfig = build_provider_config(model, runtime)
     recommendation = ModelSelectionController().decide(
         ModelSelectionSignal(
@@ -856,7 +823,7 @@ def format_model_status(model: str, runtime: dict[str, Any] | None = None) -> st
             recent_failures=int((runtime or {}).get("recentFailures", 0) or 0),
             requires_tools=True,
             current_model=model,
-        )
+        ), runtime=runtime,
     )
 
     lines = [
@@ -866,7 +833,7 @@ def format_model_status(model: str, runtime: dict[str, Any] | None = None) -> st
         f"  Provider: {info.provider.value}",
         f"  Base URL: {pconfig.base_url}",
         f"  Context:  {info.context_window:,} tokens",
-        f"  Pricing:  ${info.pricing_input:.2f} / ${info.pricing_output:.2f} (in/out per 1M)",
+        f"  Pricing:  {info.pricing_currency} {info.pricing_input} / {info.pricing_output} (in/out per 1M)" if info.pricing_input is not None else "  Pricing:  unpriced",
         f"  Tools:    {'Yes' if info.supports_tools else 'No'}",
         f"  Vision:   {'Yes' if info.supports_vision else 'No'}",
         f"  API Key:  {'*' * 8}{pconfig.api_key[-4:]}" if len(pconfig.api_key) > 4 else "  API Key:  not set",

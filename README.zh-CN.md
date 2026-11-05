@@ -111,6 +111,48 @@ nanocode
 
 其他配置包括 `fallbackModels`、各服务商的候选回退模型列表，以及 `runtimeProfile`（`single` 或 `single-deep`）。候选模型必须是当前端点实际提供的模型。就绪检查核对本地配置，不能证明密钥有效、模型可用或账号额度充足。
 
+## 上下文预算与计费
+
+`/context` 显示当前会话的请求上下文：计数来源、服务商输入锚点、估算部分、总窗口、有效输入预算、输出预留和安全余量。它覆盖实际协议中的 system、消息及工具定义。请求返回后以服务商 `usage` 校准；新增消息仍需预计数，system、工具 schema 或历史内容变化时不复用旧的精确计数。没有匹配 tokenizer 或官方计数接口时采用 UTF-8 保守字节预算，可能偏高，不能当作真实 token 数。不要把累计计费用量当作当前上下文占用。
+
+原生 Anthropic 通道接近预算时可调用同源官方计数接口；兼容通道不自动假定该接口存在。`tokenCounting` 可配置 `endpoint`、`thresholdRatio`、`timeoutSeconds`、`enabled`，计数接口必须与生成接口同源。接口不可用时会注明原因并保留完整请求的保守估算和输出保护；当前没有为所有模型提供精确的本地 tokenizer。受支持的 OpenAI/百炼流式通道会请求 `include_usage`；其他兼容通道可用 `streamUsage: true` 显式启用。[百炼流式用量说明](https://help.aliyun.com/zh/model-studio/stream)
+
+长工具结果在每次模型请求前独立检查字符阈值，超过预算时保存全文并替换为带路径的短预览；这一步不依赖摘要压缩的上下文压力门槛。原始工具证据保留，恢复会话后的未变预览不会重复持久化。持久化失败会终止本轮并报告本地错误，不继续发送超长全文。
+
+`/cost` 与 `/cost --detailed` 按本进程统计，区分币种、token 估算、用量缺失和未定价响应。每次响应保存原始 usage、请求指纹与当时的价格版本；会话保存包含这些记录，恢复会话不会把旧记录重新计入新进程。内部重试和记忆等辅助请求尚未保证全部计入，金额是本地目录价估算，不是账户账单。
+
+模型窗口与价格可通过用户 `~/.nanocode/settings.json` 的 `modelPolicies` 手工维护。以下字段应合并到已有配置中，修改后重启；金额单位和币种须对应实际通道。内置 `qwen3.8-flash` 在 `dashscope.aliyuncs.com` 北京按量通道使用 2026-11-05 核对的窗口与 CNY 目录价，其他地区、订阅或转发通道不套用该价格。[官方模型信息与价格](https://help.aliyun.com/en/model-studio/qwen3-8-flash)
+
+```json
+{
+  "modelRegion": "cn-beijing",
+  "billingMode": "pay-as-you-go",
+  "modelPolicies": [{
+    "model": "qwen3.8-flash",
+    "endpoint": "https://dashscope.aliyuncs.com",
+    "region": "cn-beijing",
+    "billingMode": "pay-as-you-go",
+    "contextWindow": 1000000,
+    "maxInputTokens": 983616,
+    "maxOutputTokens": 131072,
+    "outputReserve": 8192,
+    "safetyMargin": 2048,
+    "pricing": {
+      "currency": "CNY",
+      "input": "0.8", "output": "2.7",
+      "cacheRead": "0.1", "cacheWrite": "1.25",
+      "unitTokens": 1000000,
+      "version": "manual-2026-11-05",
+      "sourceUrl": "https://help.aliyun.com/en/model-studio/qwen3-8-flash",
+      "verifiedAt": "2026-11-05"
+    }
+  }],
+  "costBudget": {"currency": "CNY", "perMinute": 0.5}
+}
+```
+
+`endpoint` 可限定到路径前缀，`region`、`deploymentScope`、`billingMode` 用于区分同模型的计价场景。阶梯价格可在 `pricing.tiers` 中按递增的 `maxInputTokens` 配置费率覆盖项；阈值按含缓存的完整输入选档，费用按该档规则计算。未知价格或缺失用量明确标为未定价；CNY 与 USD 分开累计，没有隐含汇率。成本控制与模型路由读取同一价格入口，不能比较或合并没有换算依据的币种。
+
 ## 常用命令
 
 | 命令 | 作用 |
