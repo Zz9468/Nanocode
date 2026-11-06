@@ -10,6 +10,7 @@ from nanocode.product_surfaces import (
     ReadinessReport,
     build_product_snapshot,
 )
+from nanocode.user_profile import UserProfileManager
 
 
 def _maybe_read(path: Path) -> str | None:
@@ -102,7 +103,7 @@ def build_system_prompt_bundle(
 
     Implements cache boundaries:
     - Static prefix (role, governance rules) is cacheable across turns.
-    - Dynamic suffix (skills, MCP, CLAUDE.md) is re-evaluated per turn.
+    - Dynamic suffix (skills, MCP, CLAUDE.md, USER.md) is re-evaluated per turn.
 
     Args:
         cwd: Current working directory
@@ -343,6 +344,21 @@ def build_system_prompt_bundle(
             "project_claude_md",
             lambda: f"Project instructions from {cwd_path / 'CLAUDE.md'}:\n{project_claude_md}",
             cache_ttl=300.0,
+        )
+
+    # Resolve saved preferences for this cwd on every prompt build so edits,
+    # resets, and project changes are reflected without a stale profile cache.
+    profile_manager = UserProfileManager(cwd_path)
+    profile_section = profile_manager.to_prompt_section(profile_manager.load_merged())
+    if profile_section:
+        pipeline.register_dynamic(
+            "user_profile",
+            lambda: (
+                f"{profile_section}\n"
+                "Apply these saved preferences as defaults; explicit instructions "
+                "in the current task take precedence."
+            ),
+            cache_ttl=0.0,
         )
 
     instruction_layers = product_snapshot.get("instruction_layers", [])

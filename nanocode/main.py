@@ -466,9 +466,8 @@ def main() -> None:
             )
         )
     
-    # Filter out our custom args before passing to management commands
-    management_argv = [a for a in argv if not a.startswith("--")]
-    if maybe_handle_management_command(cwd, management_argv):
+    # argparse already consumed the top-level options; preserve management flags.
+    if maybe_handle_management_command(cwd, argv):
         return
 
     runtime = None
