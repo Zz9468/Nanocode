@@ -439,11 +439,19 @@ def detect_provider(
     """Auto-detect which provider to use based on model name and config.
 
     Priority:
+    0. Explicit runtime provider
     1. OpenRouter — if OPENROUTER_API_KEY set or model starts with "openrouter/"
     2. OpenAI — if model matches OpenAI patterns or OPENAI_API_KEY set
     3. Custom — if CUSTOM_API_BASE_URL set
     4. Anthropic — default
     """
+    explicit_provider = (runtime or {}).get("provider")
+    if explicit_provider:
+        selected = str(explicit_provider).strip().lower()
+        if selected not in {"anthropic", "openai", "openrouter", "custom"}:
+            raise ValueError(f"Unsupported configured provider: {selected}")
+        return Provider(selected)
+
     model_lower = model.lower()
 
     # 1. OpenRouter detection
@@ -623,18 +631,18 @@ def build_provider_config(model: str, runtime: dict[str, Any] | None = None) -> 
         )
 
     if provider == Provider.CUSTOM:
-        # Check for DeepSeek-specific env vars first
+        # Resolved runtime settings take precedence over ambient provider keys.
         deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "")
         base_url = (
-            os.environ.get("CUSTOM_API_BASE_URL", "")
+            runtime.get("customBaseUrl", "")
+            or os.environ.get("CUSTOM_API_BASE_URL", "")
             or (deepseek_key and "https://api.deepseek.com/v1" or "")
-            or runtime.get("customBaseUrl", "")
         ).rstrip("/")
         api_key = (
-            os.environ.get("CUSTOM_API_KEY", "")
+            runtime.get("customApiKey", "")
+            or os.environ.get("CUSTOM_API_KEY", "")
             or deepseek_key
             or os.environ.get("OPENAI_API_KEY", "")
-            or runtime.get("customApiKey", "")
         )
         return ProviderConfig(
             provider=Provider.CUSTOM,

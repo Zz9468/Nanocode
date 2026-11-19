@@ -111,6 +111,9 @@ nanocode
 
 其他配置包括 `fallbackModels`、各服务商的候选回退模型列表，以及 `runtimeProfile`（`single` 或 `single-deep`）。候选模型必须是当前端点实际提供的模型。就绪检查核对本地配置，不能证明密钥有效、模型可用或账号额度充足。
 
+本地 vLLM 接口可使用 [示例配置](./Main/NanocodeFrontline/Config/Vllm.json)。
+启动 Nanocode 前，将 `NANO_CODE_SETTINGS_FILE` 设为配置文件的绝对路径，将 `NANOCODE_VLLM_API_KEY` 设为接口密钥。选中的文件替代全局设置和 MCP 配置，设置变更也保存到该文件。示例使用 `http://127.0.0.1:18000/v1` 和模型 `qwen3-8b`；请按部署情况调整，需要 SSH 隧道时先建立隧道。
+
 ## 上下文预算与计费
 
 `/context` 显示当前会话的请求上下文：计数来源、服务商输入锚点、估算部分、总窗口、有效输入预算、输出预留和安全余量。它覆盖实际协议中的 system、消息及工具定义。请求返回后以服务商 `usage` 校准；新增消息仍需预计数，system、工具 schema 或历史内容变化时不复用旧的精确计数。没有匹配 tokenizer 或官方计数接口时采用 UTF-8 保守字节预算，可能偏高，不能当作真实 token 数。不要把累计计费用量当作当前上下文占用。

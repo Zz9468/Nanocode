@@ -111,6 +111,9 @@ The ordinary CLI **does not automatically load a project `.env` file**. Export v
 
 Additional settings include `fallbackModels`, provider-specific fallback lists, and `runtimeProfile` (`single` or `single-deep`). Configure fallback IDs that your endpoint actually offers. Local readiness checks inspect configuration; they do not prove that a key is valid, a model is available, or quota remains.
 
+For a local vLLM endpoint, use the [example settings](./Main/NanocodeFrontline/Config/Vllm.json).
+Set `NANO_CODE_SETTINGS_FILE` to the settings file's absolute path and `NANOCODE_VLLM_API_KEY` to your endpoint's API key before starting Nanocode. The selected file replaces global settings and MCP configuration; settings changes are saved back to that file. The example uses `http://127.0.0.1:18000/v1` and model `qwen3-8b`; adjust these values for your deployment and establish an SSH tunnel first if needed.
+
 ## Daily commands
 
 | Command | Purpose |

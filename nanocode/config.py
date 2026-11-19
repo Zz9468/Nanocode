@@ -433,6 +433,14 @@ def read_settings_file(file_path: Path) -> dict[str, Any]:
     return _read_json_file(file_path)
 
 
+def active_settings_path(cwd: str | Path | None = None) -> Path:
+    selected = os.environ.get("NANO_CODE_SETTINGS_FILE", "").strip()
+    if not selected:
+        return NANO_CODE_SETTINGS_PATH
+    path = Path(selected).expanduser()
+    return path if path.is_absolute() else Path(cwd or Path.cwd()) / path
+
+
 def read_mcp_config_file(file_path: Path) -> dict[str, Any]:
     parsed = _read_json_file(file_path)
     if not isinstance(parsed, dict):
@@ -448,8 +456,8 @@ def merge_settings(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         next_server = dict(server)
         current.update(next_server)
         current["env"] = {
-            **dict(merged_mcp.get(name, {}).get("env", {})),
-            **dict(next_server.get("env", {})),
+            **dict(merged_mcp.get(name, {}).get("env") or {}),
+            **dict(next_server.get("env") or {}),
         }
         merged_mcp[name] = current
 
@@ -469,6 +477,15 @@ def load_effective_settings(
     *,
     trust_project_mcp: bool = False,
 ) -> dict[str, Any]:
+    if os.environ.get("NANO_CODE_SETTINGS_FILE", "").strip():
+        path = active_settings_path(cwd)
+        if not path.is_file():
+            raise RuntimeError(f"Selected settings file does not exist: {path}")
+        settings = read_settings_file(path)
+        if not isinstance(settings, dict):
+            raise ValueError("Selected settings file must contain a JSON object")
+        return settings
+
     claude_settings = read_settings_file(CLAUDE_SETTINGS_PATH)
     global_mcp = read_mcp_config_file(NANO_CODE_MCP_PATH)
 
@@ -498,10 +515,11 @@ def load_effective_settings(
 
 
 def save_nano_code_settings(updates: dict[str, Any]) -> None:
-    NANO_CODE_DIR.mkdir(parents=True, exist_ok=True)
-    existing = read_settings_file(NANO_CODE_SETTINGS_PATH)
+    target = active_settings_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing = read_settings_file(target)
     next_settings = merge_settings(existing, updates)
-    NANO_CODE_SETTINGS_PATH.write_text(
+    target.write_text(
         json.dumps(next_settings, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -586,6 +604,13 @@ def load_runtime_config(
         or effective.get("customApiKey", "")
         or openai_api_key
     )
+    custom_key_env = effective.get("customApiKeyEnv")
+    if custom_key_env is not None:
+        if not isinstance(custom_key_env, str) or not custom_key_env.strip():
+            raise ValueError("customApiKeyEnv must name an environment variable")
+        custom_api_key = os.environ.get(custom_key_env.strip(), "").strip()
+        if not custom_api_key:
+            raise RuntimeError(f"Required API key environment variable is not set: {custom_key_env}")
 
     raw_max_output_tokens = (
         os.environ.get("NANO_CODE_MAX_OUTPUT_TOKENS")
@@ -654,6 +679,7 @@ def load_runtime_config(
 
     return {
         "model": model,
+        "provider": effective.get("provider", ""),
         "configuredModel": model,
         "baseUrl": base_url,
         "authToken": auth_token,
@@ -714,7 +740,11 @@ def load_runtime_config(
             or effective.get("toolProfile", "")
             or "core"
         ).strip().lower(),
-        "sourceSummary": f"config: {NANO_CODE_SETTINGS_PATH} > {CLAUDE_SETTINGS_PATH} > process.env",
+        "sourceSummary": (
+            f"config: {active_settings_path(cwd)} (isolated settings) > process.env"
+            if os.environ.get("NANO_CODE_SETTINGS_FILE", "").strip()
+            else f"config: {NANO_CODE_SETTINGS_PATH} > {CLAUDE_SETTINGS_PATH} > process.env"
+        ),
     }
 
 

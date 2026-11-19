@@ -1,3 +1,8 @@
+import json
+from pathlib import Path
+
+import pytest
+
 import nanocode.config as config_module
 from nanocode.config import (
     describe_fallback_guidance,
@@ -24,7 +29,7 @@ def test_merge_settings_merges_env_and_mcp_servers() -> None:
             "env": {"B": "2"},
             "mcpServers": {
                 "fs": {"command": "uvx", "env": {"Y": "2"}},
-                "search": {"command": "python"},
+                "search": {"command": "python", "env": None},
             },
         },
     )
@@ -34,6 +39,7 @@ def test_merge_settings_merges_env_and_mcp_servers() -> None:
     assert merged["mcpServers"]["fs"]["args"] == ["a"]
     assert merged["mcpServers"]["fs"]["env"] == {"X": "1", "Y": "2"}
     assert merged["mcpServers"]["search"]["command"] == "python"
+    assert merged["mcpServers"]["search"]["env"] == {}
 
 
 def test_validate_provider_runtime_rejects_mismatched_provider_key() -> None:
@@ -471,3 +477,73 @@ def test_project_mcp_not_loaded_by_default(tmp_path, monkeypatch):
     # With trust: loaded
     settings_trusted = load_effective_settings(str(tmp_path), trust_project_mcp=True)
     assert "evil" in settings_trusted.get("mcpServers", {}), "project MCP not loaded with trust!"
+
+
+def test_vllm_settings_select_real_adapter_and_budget(monkeypatch):
+    from nanocode.model_registry import build_provider_config, create_model_adapter
+    from nanocode.openai_adapter import OpenAIModelAdapter
+    from nanocode.tooling import ToolRegistry
+
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("NANO_CODE_SETTINGS_FILE", "Main/NanocodeFrontline/Config/Vllm.json")
+    monkeypatch.setenv("NANOCODE_VLLM_API_KEY", "local-service-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "other-provider-key")
+    monkeypatch.setenv("CUSTOM_API_KEY", "other-custom-key")
+    monkeypatch.setenv("CUSTOM_API_BASE_URL", "https://other-provider.example/v1")
+    monkeypatch.delenv("NANO_CODE_MODEL", raising=False)
+    monkeypatch.delenv("NANO_CODE_MODEL_MODE", raising=False)
+    monkeypatch.delenv("NANO_CODE_MAX_OUTPUT_TOKENS", raising=False)
+
+    runtime = load_runtime_config(root)
+    provider = build_provider_config(runtime["model"], runtime)
+    adapter = create_model_adapter(runtime["model"], ToolRegistry([]), runtime)
+
+    assert runtime["model"] == "qwen3-8b"
+    assert runtime["mcpServers"] == {}
+    assert provider.provider == Provider.CUSTOM
+    assert provider.base_url == "http://127.0.0.1:18000/v1"
+    assert provider.api_key == "local-service-key"
+    assert isinstance(adapter, OpenAIModelAdapter)
+    assert adapter.token_accounting.policy.context_window == 32768
+    body = adapter.build_request_body([{"role": "user", "content": "hello"}], stream=True)
+    assert body["model"] == "qwen3-8b"
+    assert body["max_tokens"] == 4096
+    assert body["stream_options"] == {"include_usage": True}
+
+
+def test_selected_settings_require_dedicated_key(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("NANO_CODE_SETTINGS_FILE", "Main/NanocodeFrontline/Config/Vllm.json")
+    monkeypatch.delenv("NANOCODE_VLLM_API_KEY", raising=False)
+    monkeypatch.setenv("CUSTOM_API_KEY", "unrelated-key")
+    with pytest.raises(RuntimeError, match="NANOCODE_VLLM_API_KEY"):
+        load_runtime_config(root)
+
+
+def test_selected_settings_missing_or_invalid_does_not_load_global(tmp_path, monkeypatch):
+    selected = tmp_path / "selected.json"
+    monkeypatch.setenv("NANO_CODE_SETTINGS_FILE", str(selected))
+    with pytest.raises(RuntimeError, match="does not exist"):
+        config_module.load_effective_settings(tmp_path)
+    selected.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="JSON object"):
+        config_module.load_effective_settings(tmp_path)
+
+
+def test_save_settings_updates_selected_file_only(tmp_path, monkeypatch):
+    selected = tmp_path / "selected.json"
+    default = tmp_path / "default.json"
+    selected.write_text(json.dumps({"model": "local-model"}), encoding="utf-8")
+    default.write_text(json.dumps({"model": "vendor-model"}), encoding="utf-8")
+    monkeypatch.setattr(config_module, "NANO_CODE_SETTINGS_PATH", default)
+    monkeypatch.setenv("NANO_CODE_SETTINGS_FILE", str(selected))
+    config_module.save_nano_code_settings({"maxOutputTokens": 1024})
+    saved = json.loads(selected.read_text(encoding="utf-8"))
+    assert saved["model"] == "local-model"
+    assert saved["maxOutputTokens"] == 1024
+    assert json.loads(default.read_text(encoding="utf-8")) == {"model": "vendor-model"}
+
+
+def test_explicit_provider_rejects_typo():
+    with pytest.raises(ValueError, match="Unsupported configured provider"):
+        detect_provider("qwen3-8b", {"provider": "custmo"}, probe_openai_models=False)
