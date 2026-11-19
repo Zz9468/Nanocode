@@ -245,6 +245,26 @@ def test_file_tree_rejects_paths_that_escape_workspace(tmp_path: Path) -> None:
     assert "secret.txt" not in result.output
 
 
+def test_unittest_runner_accepts_one_file_without_running_neighbors(tmp_path: Path) -> None:
+    (tmp_path / "test_selected.py").write_text(
+        "import unittest\n"
+        "from math import isqrt\n"
+        "class SelectedTests(unittest.TestCase):\n"
+        "    def test_square_root(self):\n"
+        "        self.assertEqual(isqrt(81), 9)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_neighbor.py").write_text(
+        "raise RuntimeError('The neighboring file must not be executed')\n",
+        encoding="utf-8",
+    )
+    args = test_runner_tool.validator({"path": "test_selected.py", "framework": "unittest"})
+    result = test_runner_tool.run(args, ToolContext(cwd=str(tmp_path)))
+    assert result.ok, result.output
+    assert "Test files: 1" in result.output
+    assert "Passed:  1" in result.output
+
+
 def test_test_runner_rejects_paths_that_escape_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

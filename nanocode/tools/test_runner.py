@@ -226,9 +226,11 @@ def _run(input_data: dict, context) -> ToolResult:
         
     else:  # unittest
         cmd = [sys.executable, "-m", "unittest", "discover"]
-        cmd.extend(["-s", str(target)])
+        cmd.extend(["-s", str(target.parent if target.is_file() else target)])
         
-        if pattern:
+        if target.is_file():
+            cmd.extend(["-p", target.name])
+        elif pattern:
             cmd.extend(["-p", f"*{pattern}*"])
         else:
             cmd.extend(["-p", "test_*.py"])
